@@ -1,0 +1,15 @@
+<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>DRD Request</title><link rel="stylesheet" href="/static/style.css"></head><body>
+<div class="card"><h1>DRD Manufacturing Solutions</h1><p class="muted">Manufacturing & Engineering Requirement</p>
+<form method="post" action="/submit" enctype="multipart/form-data">
+<label>Company Name *</label><input name="company" required>
+<label>Client Name *</label><input name="client_name" required>
+<label>WhatsApp Number *</label><input name="whatsapp" placeholder="+92..." required>
+<label>Part Name *</label><input name="part_name" required>
+<div class="grid"><div><label>Quantity</label><input name="quantity"></div><div><label>Required Date</label><input type="date" name="required_date"></div></div>
+<label>Material (if known)</label><input name="material" placeholder="e.g. Al 6061-T6">
+<label>Requirement Type</label><select name="req_type"><option>Manufacturing / Small Job</option><option>Reverse Engineering</option><option>Engineering / DFM Review</option><option>Project / Tender</option><option>Need Office Visit</option></select>
+<label>Drawing / CAD / PDF</label><input type="file" name="file">
+<label>Short Requirement / Notes</label><textarea name="notes" rows="4"></textarea>
+<button type="submit">Submit Request</button></form>
+{% with messages=get_flashed_messages() %}{% for m in messages %}<div class="alert">{{m}}</div>{% endfor %}{% endwith %}
+</div></body></html>

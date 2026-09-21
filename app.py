@@ -143,10 +143,12 @@ def load_requests():
                 data = json.load(f)
 
             changed = False
+
             for req in data:
                 defaults = {
                     'base_price': 0,
                     'gst_percent': settings.get('gst_percent', 18),
+                    'gst_enabled': settings.get('gst_enabled', True),
                     'gst_amount': 0,
                     'wht_enabled': False,
                     'wht_percent': 0,
@@ -157,6 +159,11 @@ def load_requests():
                     'net_payable': 0,
                     'delivery_time': 'Pending',
                     'remarks': '',
+                    'quotation_type': 'standard',
+
+                    # New multi-part quotation structure
+                    'parts': [],
+
                     'status': 'New',
                     'customer_confirmed': False,
                     'payment_status': 'Not Submitted',
@@ -167,20 +174,139 @@ def load_requests():
                     'invoice_number': '',
                     'invoice_date': ''
                 }
+
                 for key, value in defaults.items():
                     if key not in req:
                         req[key] = value
                         changed = True
 
+                # -------------------------------------------------
+                # Backward compatibility:
+                # Old single-part orders are converted into
+                # the new multi-part structure automatically.
+                # -------------------------------------------------
+                if not req.get('parts'):
+                    old_part = {
+                        'part_no': 'P-001',
+                        'part_name': req.get('part_name', ''),
+                        'description': req.get('requirement', ''),
+                        'quantity': req.get('quantity', ''),
+                        'material': req.get('material', ''),
+                        'price': float(req.get('base_price', 0) or 0)
+                    }
+
+                    req['parts'] = [old_part]
+                    changed = True
+
+                # Keep old fields synchronized with first part
+                # so existing pages/payment system continue working.
+                first_part = req['parts'][0] if req['parts'] else {}
+
+                if 'part_name' not in req or not req.get('part_name'):
+                    req['part_name'] = first_part.get('part_name', '')
+                    changed = True
+
+                if 'quantity' not in req or not req.get('quantity'):
+                    req['quantity'] = first_part.get('quantity', '')
+                    changed = True
+
+                if 'material' not in req or not req.get('material'):
+                    req['material'] = first_part.get('material', '')
+                    changed = True
+
+                # Recalculate base price from all quotation parts
+                total_parts_price = 0.0
+
+                for part in req.get('parts', []):
+                    try:
+                        part['price'] = float(part.get('price', 0) or 0)
+                    except (ValueError, TypeError):
+                        part['price'] = 0.0
+
+                    total_parts_price += part['price']
+
+                # Only synchronize automatically when parts exist.
+                req['base_price'] = total_parts_price
+
+                # Keep quotation calculations valid
+                try:
+                    gst_percent = float(
+                        req.get(
+                            'gst_percent',
+                            settings.get('gst_percent', 18)
+                        ) or 0
+                    )
+                except (ValueError, TypeError):
+                    gst_percent = 18.0
+
+                req['gst_percent'] = gst_percent
+
+                gst_enabled = bool(
+                    req.get(
+                        'gst_enabled',
+                        settings.get('gst_enabled', True)
+                    )
+                )
+
+                req['gst_enabled'] = gst_enabled
+
+                try:
+                    wht_percent = float(
+                        req.get(
+                            'wht_percent',
+                            settings.get('wht_percent', 0)
+                        ) or 0
+                    )
+                except (ValueError, TypeError):
+                    wht_percent = 0.0
+
+                req['wht_percent'] = wht_percent
+
+                wht_enabled = bool(req.get('wht_enabled', False))
+                wht_mode = req.get(
+                    'wht_mode',
+                    settings.get('wht_mode', 'deduct')
+                )
+
+                req['wht_enabled'] = wht_enabled
+                req['wht_mode'] = wht_mode
+
+                (
+                    gst_amount,
+                    gross_total,
+                    wht_amount,
+                    total_price,
+                    net_payable
+                ) = calculate_amounts(
+                    total_parts_price,
+                    gst_enabled,
+                    gst_percent,
+                    wht_enabled,
+                    wht_percent,
+                    wht_mode
+                )
+
+                req['gst_amount'] = gst_amount
+                req['gross_total'] = gross_total
+                req['wht_amount'] = wht_amount
+                req['total_price'] = total_price
+                req['net_payable'] = net_payable
+
                 req['wa_link'] = make_whatsapp_link(req, settings)
 
             if changed:
                 save_all_requests(data)
-            return sorted(data, key=lambda x: x.get('time', ''), reverse=True)
+
+            return sorted(
+                data,
+                key=lambda x: x.get('time', ''),
+                reverse=True
+            )
+
         except Exception as e:
             print('Error loading requests:', e)
-    return []
 
+    return []
 
 def save_all_requests(reqs):
     clean_data = []

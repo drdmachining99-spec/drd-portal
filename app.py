@@ -35,7 +35,19 @@ DEFAULT_SETTINGS = {
     'notification_numbers': ['', '', ''],
     'admin_pin': '',
     'default_terms_conditions': '',
-    'terms_library': []
+    'terms_library': [],
+    'welcome_voice_lang': 'en-US',
+    'welcome_voice_hint': '',
+    'welcome_pitch': 1.1,
+    'welcome_rate': 0.93,
+    'welcome_volume': 1.0,
+    'welcome_message_en': ("Welcome to D R D Manufacturing Solutions! I'm here to help you place your order. "
+                            "Tell me, what would you like us to manufacture for you today? Please fill in your details below, "
+                            "and use the microphone buttons if you'd rather speak than type."),
+    'welcome_message_ur': ("ڈی آر ڈی مینوفیکچرنگ میں خوش آمدید۔ میں آپ کا آرڈر لینے کے لیے حاضر ہوں۔ بتائیں، آج آپ ہم سے کیا بنوانا "
+                            "چاہتے ہیں؟ نیچے اپنی تفصیلات پر کریں، اور بول کر بتانا چاہیں تو مائک بٹن استعمال کریں۔"),
+    'admin_auto_refresh': True,
+    'admin_notify_sound': True
 }
 
 FALLBACK_TERMS = ('Quoted prices are based on the stated scope, quantities and specifications. Any change in drawing, '
@@ -69,6 +81,9 @@ def load_settings():
             continue
         clean_lib.append({'id': c.get('id') or f't{i+1}', 'title': title or f'Clause {i+1}', 'text': text})
     data['terms_library'] = clean_lib
+    data['welcome_pitch'] = min(2.0, max(0.5, safe_float(data.get('welcome_pitch'), 1.1)))
+    data['welcome_rate'] = min(1.5, max(0.5, safe_float(data.get('welcome_rate'), 0.93)))
+    data['welcome_volume'] = min(1.0, max(0.0, safe_float(data.get('welcome_volume'), 1.0)))
     return data
 
 
@@ -573,7 +588,7 @@ button{width:100%;padding:14px;background:linear-gradient(135deg,#123f5d,#1d6fa5
 button:hover{opacity:.92;transform:translateY(-1px)}
 </style></head><body><div class="box"><div class="brand"><h2>⚙️ DRD Manufacturing Solutions</h2><p>Engineering & Manufacturing Order Portal</p></div><div class="track-link"><a href="/track">📦 Track an existing order →</a></div>
 
-<div class="voicebar"><button type="button" id="voiceGuideToggle" onclick="toggleGuide(true)">🔊 Voice Guide: ON</button><button type="button" id="replayWelcome" onclick="playWelcome()">🔁 Replay Welcome</button><select id="voiceLang" onchange="onLangChange()"><option value="ur-PK">اردو</option><option value="en-US" selected>English</option></select><span class="hint">If you didn't hear a voice automatically, tap "Replay Welcome" once.</span></div>
+<div class="voicebar"><button type="button" id="voiceGuideToggle" onclick="toggleGuide(true)">🔊 Voice Guide: ON</button><button type="button" id="replayWelcome" onclick="playWelcome()">🔁 Replay Welcome</button><select id="voiceLang" onchange="onLangChange()"><option value="ur-PK" {% if settings.welcome_voice_lang.startswith('ur') %}selected{% endif %}>اردو</option><option value="en-US" {% if settings.welcome_voice_lang=='en-US' %}selected{% endif %}>English (US)</option><option value="en-GB" {% if settings.welcome_voice_lang=='en-GB' %}selected{% endif %}>English (UK)</option><option value="en-IN" {% if settings.welcome_voice_lang=='en-IN' %}selected{% endif %}>English (India)</option></select><span class="hint">If you didn't hear a voice automatically, tap "Replay Welcome" once.</span></div>
 
 <form method="POST" enctype="multipart/form-data">
 <label>Company Name <button type="button" class="mic-btn" onclick="startVoice('company',this)">🎤</button></label><input name="company" id="company" required onfocus="guideField('company')">
@@ -600,13 +615,25 @@ const GUIDE = {
   requirement:{en:"Describe your requirement in detail. You can also speak it using the microphone.",ur:"اپنی ضرورت تفصیل سے بتائیں، بول کر بھی بتا سکتے ہیں۔"}
 };
 const WELCOME = {
-  en:"Welcome to D R D Manufacturing Solutions! I'm here to help you place your order. Tell me, what would you like us to manufacture for you today? Please fill in your details below, and use the microphone buttons if you'd rather speak than type.",
-  ur:"ڈی آر ڈی مینوفیکچرنگ میں خوش آمدید۔ میں آپ کا آرڊر لینے کے لیے حاضر ہوں۔ بتائیں، آج آپ ہم سے کیا بنوانا چاہتے ہیں؟ نیچے اپنی تفصیلات پر کریں، اور بول کر بتانا چاہیں تو مائک بٹن استعمال کریں۔"
+  en:{{ settings.welcome_message_en|tojson }},
+  ur:{{ settings.welcome_message_ur|tojson }}
+};
+const VOICE_CFG = {
+  hint:{{ settings.welcome_voice_hint|tojson }},
+  pitch:{{ settings.welcome_pitch }},
+  rate:{{ settings.welcome_rate }},
+  volume:{{ settings.welcome_volume }}
 };
 function pickVoice(lang){
   const voices = window.speechSynthesis ? window.speechSynthesis.getVoices() : [];
   const base = lang.split('-')[0];
   const candidates = voices.filter(v => v.lang && v.lang.toLowerCase().startsWith(base));
+  if(VOICE_CFG.hint){
+    const hinted = candidates.find(v => v.name.toLowerCase().includes(VOICE_CFG.hint.toLowerCase()));
+    if(hinted) return hinted;
+  }
+  const premium = candidates.find(v => /google|natural|neural|online|premium/i.test(v.name));
+  if(premium) return premium;
   const nicePick = candidates.find(v => /female|zira|samantha|susan|google uk english female|heera|gul/i.test(v.name));
   return nicePick || candidates[0] || voices[0] || null;
 }
@@ -616,9 +643,9 @@ function speak(text){
   const u = new SpeechSynthesisUtterance(text);
   const lang = document.getElementById('voiceLang').value;
   u.lang = lang;
-  u.pitch = 1.15;
-  u.rate = 0.95;
-  u.volume = 1;
+  u.pitch = VOICE_CFG.pitch;
+  u.rate = VOICE_CFG.rate;
+  u.volume = VOICE_CFG.volume;
   const v = pickVoice(lang);
   if(v) u.voice = v;
   window.speechSynthesis.speak(u);
@@ -717,7 +744,35 @@ function addTermRow(){
   div.innerHTML='<input name="term_title[]" placeholder="Clause title e.g. Delivery Delay"><textarea name="term_text[]" rows="2" placeholder="Clause text shown on the PDF"></textarea><button type="button" onclick="this.closest(\\'.termrow\\').remove()" style="background:#dc3545">Remove</button>';
   box.appendChild(div);
 }
-</script></head><body><div class="box"><a href="/drd-secure-admin">← Admin</a><h2>Settings</h2><p style="color:#777;font-size:13px">All fields below are optional — leave anything blank and it will simply not appear on quotations/invoices.</p><form method="POST"><div class="grid">{% for key,label in [('company_name','Company Name'),('address','Address'),('phone','Phone'),('email','Email'),('website','Website'),('ntn','NTN'),('strn','STRN / GST'),('bank_name','Bank Name'),('account_title','Account Title'),('account_number','Account Number'),('iban','IBAN')] %}<div><label>{{label}}</label><input name="{{key}}" value="{{s[key]}}"></div>{% endfor %}</div><label>Payment Instructions</label><textarea name="payment_instructions" rows="3">{{s.payment_instructions}}</textarea><h3>Terms & Conditions Library</h3><p style="color:#777;font-size:13px;margin-top:-4px">Add each clause once here. When making a quotation you'll just tick the ones that apply — no retyping every time. Tip: add new clauses at the bottom rather than deleting old ones once a quotation has already been sent to a customer.</p><div id="termsBox">{% for c in s.terms_library %}<div class="rowbox termrow"><input name="term_title[]" value="{{c.title}}" placeholder="Clause title e.g. Delivery Delay"><textarea name="term_text[]" rows="2" placeholder="Clause text shown on the PDF">{{c.text}}</textarea><button type="button" onclick="this.closest('.termrow').remove()" style="background:#dc3545">Remove</button></div>{% endfor %}</div><button type="button" onclick="addTermRow()">+ Add Clause</button><h3>Default / Fallback Wording</h3><p style="color:#777;font-size:13px;margin-top:-4px">Used only when no clause above is ticked on a particular quotation.</p><textarea name="default_terms_conditions" rows="4" placeholder="Leave blank to use the built-in default wording">{{s.default_terms_conditions}}</textarea><h3>Tax</h3><label>GST %</label><input name="gst_percent" type="number" step="any" value="{{s.gst_percent}}"><label><input style="width:auto" type="checkbox" name="gst_enabled" {% if s.gst_enabled %}checked{% endif %}> Enable GST</label><label>WHT %</label><input name="wht_percent" type="number" step="any" value="{{s.wht_percent}}"><label><input style="width:auto" type="checkbox" name="wht_enabled" {% if s.wht_enabled %}checked{% endif %}> Enable WHT</label><label>WHT Mode</label><select name="wht_mode"><option value="deduct" {% if s.wht_mode=='deduct' %}selected{% endif %}>Deduct</option><option value="add" {% if s.wht_mode=='add' %}selected{% endif %}>Add</option></select><h3>Default Payment Terms</h3><select name="payment_terms"><option value="50_50" {% if s.payment_terms=='50_50' %}selected{% endif %}>50% Advance + 50% before/at Delivery</option><option value="100_advance" {% if s.payment_terms=='100_advance' %}selected{% endif %}>100% Advance</option><option value="custom" {% if s.payment_terms=='custom' %}selected{% endif %}>Custom</option></select><label>Custom Payment Terms</label><textarea name="custom_payment_terms">{{s.custom_payment_terms}}</textarea><h3>Notification WhatsApp Numbers</h3>{% for i in range(3) %}<label>Notification Number {{i+1}}</label><input name="notification_{{i}}" value="{{s.notification_numbers[i]}}" placeholder="923175240272">{% endfor %}<p>Normal wa.me links cannot automatically push notifications; these numbers are stored for notification links/manual use. Automatic WhatsApp notifications require an API/provider.</p><button>Save Settings</button></form></div></body></html>'''
+function pickTestVoice(lang, hint){
+  const voices = window.speechSynthesis ? window.speechSynthesis.getVoices() : [];
+  const base = lang.split('-')[0];
+  const candidates = voices.filter(v => v.lang && v.lang.toLowerCase().startsWith(base));
+  if(hint){
+    const hinted = candidates.find(v => v.name.toLowerCase().includes(hint.toLowerCase()));
+    if(hinted) return hinted;
+  }
+  const premium = candidates.find(v => /google|natural|neural|online|premium/i.test(v.name));
+  if(premium) return premium;
+  const nicePick = candidates.find(v => /female|zira|samantha|susan|heera|gul/i.test(v.name));
+  return nicePick || candidates[0] || voices[0] || null;
+}
+function testVoice(){
+  if(!('speechSynthesis' in window)){ alert('This browser does not support voice playback.'); return; }
+  const lang = document.getElementById('wvl').value;
+  const hint = document.getElementById('wvh').value;
+  const text = lang.startsWith('ur') ? document.getElementById('wmu').value : document.getElementById('wme').value;
+  window.speechSynthesis.cancel();
+  const u = new SpeechSynthesisUtterance(text);
+  u.lang = lang;
+  u.pitch = parseFloat(document.getElementById('wvp').value);
+  u.rate = parseFloat(document.getElementById('wvr').value);
+  u.volume = parseFloat(document.getElementById('wvv').value);
+  const v = pickTestVoice(lang, hint);
+  if(v) u.voice = v;
+  window.speechSynthesis.speak(u);
+}
+</script></head><body><div class="box"><a href="/drd-secure-admin">← Admin</a><h2>Settings</h2><p style="color:#777;font-size:13px">All fields below are optional — leave anything blank and it will simply not appear on quotations/invoices.</p><form method="POST"><div class="grid">{% for key,label in [('company_name','Company Name'),('address','Address'),('phone','Phone'),('email','Email'),('website','Website'),('ntn','NTN'),('strn','STRN / GST'),('bank_name','Bank Name'),('account_title','Account Title'),('account_number','Account Number'),('iban','IBAN')] %}<div><label>{{label}}</label><input name="{{key}}" value="{{s[key]}}"></div>{% endfor %}</div><label>Payment Instructions</label><textarea name="payment_instructions" rows="3">{{s.payment_instructions}}</textarea><h3>Terms & Conditions Library</h3><p style="color:#777;font-size:13px;margin-top:-4px">Add each clause once here. When making a quotation you'll just tick the ones that apply — no retyping every time. Tip: add new clauses at the bottom rather than deleting old ones once a quotation has already been sent to a customer.</p><div id="termsBox">{% for c in s.terms_library %}<div class="rowbox termrow"><input name="term_title[]" value="{{c.title}}" placeholder="Clause title e.g. Delivery Delay"><textarea name="term_text[]" rows="2" placeholder="Clause text shown on the PDF">{{c.text}}</textarea><button type="button" onclick="this.closest('.termrow').remove()" style="background:#dc3545">Remove</button></div>{% endfor %}</div><button type="button" onclick="addTermRow()">+ Add Clause</button><h3>Default / Fallback Wording</h3><p style="color:#777;font-size:13px;margin-top:-4px">Used only when no clause above is ticked on a particular quotation.</p><textarea name="default_terms_conditions" rows="4" placeholder="Leave blank to use the built-in default wording">{{s.default_terms_conditions}}</textarea><h3>Tax</h3><label>GST %</label><input name="gst_percent" type="number" step="any" value="{{s.gst_percent}}"><label><input style="width:auto" type="checkbox" name="gst_enabled" {% if s.gst_enabled %}checked{% endif %}> Enable GST</label><label>WHT %</label><input name="wht_percent" type="number" step="any" value="{{s.wht_percent}}"><label><input style="width:auto" type="checkbox" name="wht_enabled" {% if s.wht_enabled %}checked{% endif %}> Enable WHT</label><label>WHT Mode</label><select name="wht_mode"><option value="deduct" {% if s.wht_mode=='deduct' %}selected{% endif %}>Deduct</option><option value="add" {% if s.wht_mode=='add' %}selected{% endif %}>Add</option></select><h3>Default Payment Terms</h3><select name="payment_terms"><option value="50_50" {% if s.payment_terms=='50_50' %}selected{% endif %}>50% Advance + 50% before/at Delivery</option><option value="100_advance" {% if s.payment_terms=='100_advance' %}selected{% endif %}>100% Advance</option><option value="custom" {% if s.payment_terms=='custom' %}selected{% endif %}>Custom</option></select><label>Custom Payment Terms</label><textarea name="custom_payment_terms">{{s.custom_payment_terms}}</textarea><h3>Notification WhatsApp Numbers</h3>{% for i in range(3) %}<label>Notification Number {{i+1}}</label><input name="notification_{{i}}" value="{{s.notification_numbers[i]}}" placeholder="923175240272">{% endfor %}<p>Normal wa.me links cannot automatically push notifications; these numbers are stored for notification links/manual use. Automatic WhatsApp notifications require an API/provider.</p><h3>🔊 Client Welcome Voice</h3><p style="color:#777;font-size:13px;margin-top:-4px">Controls the voice that greets clients on the order form. Voices come from the visitor's own browser, so use "Test Voice" below (in this browser) to check how it sounds before saving.</p><div class="grid"><div><label>Language</label><select name="welcome_voice_lang" id="wvl"><option value="en-US" {% if s.welcome_voice_lang=='en-US' %}selected{% endif %}>English (US)</option><option value="en-GB" {% if s.welcome_voice_lang=='en-GB' %}selected{% endif %}>English (UK)</option><option value="en-IN" {% if s.welcome_voice_lang=='en-IN' %}selected{% endif %}>English (India)</option><option value="ur-PK" {% if s.welcome_voice_lang=='ur-PK' %}selected{% endif %}>Urdu</option></select></div><div><label>Preferred Voice Name (optional)</label><input name="welcome_voice_hint" id="wvh" value="{{s.welcome_voice_hint}}" placeholder="e.g. Zira, Google, Samantha"></div></div><div class="grid"><div><label>Pitch ({{s.welcome_pitch}})</label><input type="range" name="welcome_pitch" id="wvp" min="0.5" max="2" step="0.05" value="{{s.welcome_pitch}}" oninput="document.getElementById('wvpVal').textContent=this.value"> <span id="wvpVal" style="font-size:12px;color:#777">{{s.welcome_pitch}}</span></div><div><label>Speed ({{s.welcome_rate}})</label><input type="range" name="welcome_rate" id="wvr" min="0.5" max="1.5" step="0.05" value="{{s.welcome_rate}}" oninput="document.getElementById('wvrVal').textContent=this.value"> <span id="wvrVal" style="font-size:12px;color:#777">{{s.welcome_rate}}</span></div><div><label>Volume ({{s.welcome_volume}})</label><input type="range" name="welcome_volume" id="wvv" min="0" max="1" step="0.05" value="{{s.welcome_volume}}" oninput="document.getElementById('wvvVal').textContent=this.value"> <span id="wvvVal" style="font-size:12px;color:#777">{{s.welcome_volume}}</span></div></div><label>Welcome Message (English)</label><textarea name="welcome_message_en" id="wme" rows="3">{{s.welcome_message_en}}</textarea><label>Welcome Message (Urdu)</label><textarea name="welcome_message_ur" id="wmu" rows="3">{{s.welcome_message_ur}}</textarea><button type="button" onclick="testVoice()" style="background:#25d366;margin-bottom:14px">🔊 Test Voice</button><h3>Admin Dashboard Notifications</h3><label><input style="width:auto" type="checkbox" name="admin_auto_refresh" {% if s.admin_auto_refresh %}checked{% endif %}> Auto-refresh admin dashboard when a new order arrives</label><label><input style="width:auto" type="checkbox" name="admin_notify_sound" {% if s.admin_notify_sound %}checked{% endif %}> Play a sound + browser notification on new orders</label><button>Save Settings</button></form></div></body></html>'''
 
 ADMIN_PAGE = '''<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>DRD Admin</title><style>
 body{font-family:Arial;background:#f0f2f7;margin:0;color:#222}
@@ -760,6 +815,42 @@ button{background:#198754;color:white;border:0;padding:7px 10px;border-radius:5p
 .client-order{border-top:1px solid #eee;padding:8px 4px;font-size:12px}
 </style><script>
 const ALL_ORDERS = {{ orders_json|safe }};
+const AUTO_REFRESH = {{ settings.admin_auto_refresh|tojson }};
+const NOTIFY_SOUND = {{ settings.admin_notify_sound|tojson }};
+let LAST_KNOWN_TIME = {{ (requests[0].time if requests else '')|tojson }};
+function beep(){
+  try{
+    const Ctx = window.AudioContext || window.webkitAudioContext;
+    const ctx = new Ctx();
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.connect(gain); gain.connect(ctx.destination);
+    osc.type = 'sine'; osc.frequency.value = 880;
+    gain.gain.setValueAtTime(0.2, ctx.currentTime);
+    osc.start();
+    osc.frequency.setValueAtTime(1046, ctx.currentTime + 0.15);
+    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.5);
+    osc.stop(ctx.currentTime + 0.5);
+  }catch(e){}
+}
+if('Notification' in window && Notification.permission === 'default'){
+  Notification.requestPermission();
+}
+function checkForNewOrders(){
+  fetch('/api/order-status').then(r=>r.json()).then(d=>{
+    if(d.latest_time && d.latest_time > LAST_KNOWN_TIME){
+      LAST_KNOWN_TIME = d.latest_time;
+      if(NOTIFY_SOUND){
+        beep();
+        if('Notification' in window && Notification.permission === 'granted'){
+          new Notification('📥 New Order Received', {body: 'A new client just submitted a request — refreshing dashboard...'});
+        }
+      }
+      if(AUTO_REFRESH){ setTimeout(()=>location.reload(), 1800); }
+    }
+  }).catch(()=>{});
+}
+if(AUTO_REFRESH || NOTIFY_SOUND){ setInterval(checkForNewOrders, 12000); }
 function tab(id,b){document.querySelectorAll('.tab').forEach(x=>x.classList.remove('active'));document.getElementById(id).classList.add('active');document.querySelectorAll('.tabs button').forEach(x=>x.classList.remove('active'));b.classList.add('active')}
 function addPart(id){let box=document.getElementById(id), row=box.querySelector('.partgrid').cloneNode(true);row.querySelectorAll('input,textarea').forEach(x=>{if(x.name==='part_no[]')x.value='P-'+String(box.querySelectorAll('.partgrid').length+1).padStart(3,'0');else x.value=''});box.appendChild(row)}
 function delPart(btn){let box=btn.closest('.partsbox');if(box.querySelectorAll('.partgrid').length>1)btn.closest('.partgrid').remove()}
@@ -869,7 +960,7 @@ def client_form():
         existing.append(new)
         save_all_requests(existing)
         return render_template_string(SUCCESS_PAGE, job_id=job_id)
-    return render_template_string(INDEX_PAGE)
+    return render_template_string(INDEX_PAGE, settings=load_settings())
 
 
 def build_orders_index(reqs):
@@ -963,6 +1054,15 @@ def admin_dashboard():
                                    orders_json=orders_json, clients=clients)
 
 
+@app.route('/api/order-status')
+def order_status_api():
+    """Tiny, cheap endpoint the admin dashboard polls to detect new orders
+    without re-downloading the whole page each time."""
+    reqs = load_requests()
+    latest_time = reqs[0].get('time', '') if reqs else ''
+    return {'total_orders': len(reqs), 'new_count': sum(r.get('status') == 'New' for r in reqs), 'latest_time': latest_time}
+
+
 @app.route('/settings', methods=['GET', 'POST'])
 def settings_page():
     if request.method == 'POST':
@@ -987,6 +1087,15 @@ def settings_page():
                 continue
             lib.append({'id': f't{i+1}', 'title': title or f'Clause {i+1}', 'text': text})
         s['terms_library'] = lib
+        s['welcome_voice_lang'] = request.form.get('welcome_voice_lang', 'en-US')
+        s['welcome_voice_hint'] = request.form.get('welcome_voice_hint', '').strip()
+        s['welcome_pitch'] = min(2.0, max(0.5, safe_float(request.form.get('welcome_pitch'), 1.1)))
+        s['welcome_rate'] = min(1.5, max(0.5, safe_float(request.form.get('welcome_rate'), 0.93)))
+        s['welcome_volume'] = min(1.0, max(0.0, safe_float(request.form.get('welcome_volume'), 1.0)))
+        s['welcome_message_en'] = request.form.get('welcome_message_en', '').strip() or DEFAULT_SETTINGS['welcome_message_en']
+        s['welcome_message_ur'] = request.form.get('welcome_message_ur', '').strip() or DEFAULT_SETTINGS['welcome_message_ur']
+        s['admin_auto_refresh'] = request.form.get('admin_auto_refresh') == 'on'
+        s['admin_notify_sound'] = request.form.get('admin_notify_sound') == 'on'
         save_settings(s)
         return redirect(url_for('settings_page'))
     return render_template_string(SETTINGS_PAGE, s=load_settings())

@@ -557,10 +557,11 @@ body{font-family:'Segoe UI',Arial,sans-serif;background:linear-gradient(160deg,#
 .track-link{text-align:right;margin:-6px 0 14px}
 .track-link a{color:#1d6fa5;text-decoration:none;font-weight:bold;font-size:13px}
 .track-link a:hover{text-decoration:underline}
-.voicebar{display:flex;gap:8px;align-items:center;background:linear-gradient(135deg,#f0f7ff,#eaf3fb);border:1.5px solid #d6e6f5;border-radius:10px;padding:10px 12px;margin:14px 0}
+.voicebar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;background:linear-gradient(135deg,#f0f7ff,#eaf3fb);border:1.5px solid #d6e6f5;border-radius:10px;padding:10px 12px;margin:14px 0}
 .voicebar select{width:auto;margin:0;padding:6px 8px;font-size:13px}
-#voiceGuideToggle{width:auto;margin:0;padding:8px 14px;font-size:13px;background:#6c757d;background-image:none}
+#voiceGuideToggle,#replayWelcome{width:auto;margin:0;padding:8px 14px;font-size:13px;background:#6c757d;background-image:none}
 #voiceGuideToggle.on{background:linear-gradient(135deg,#123f5d,#1d6fa5)}
+#replayWelcome{background:linear-gradient(135deg,#e67e22,#f39c12)}
 .voicebar .hint{font-size:12px;color:#667;flex:1;min-width:120px}
 label{font-weight:bold;display:flex;align-items:center;gap:8px;margin-top:14px;color:#333;font-size:14px}
 .mic-btn{width:auto;margin:0;padding:5px 9px;border-radius:20px;font-size:14px;background:#eef3f9;color:#123f5d;font-weight:normal;box-shadow:none}
@@ -572,7 +573,7 @@ button{width:100%;padding:14px;background:linear-gradient(135deg,#123f5d,#1d6fa5
 button:hover{opacity:.92;transform:translateY(-1px)}
 </style></head><body><div class="box"><div class="brand"><h2>⚙️ DRD Manufacturing Solutions</h2><p>Engineering & Manufacturing Order Portal</p></div><div class="track-link"><a href="/track">📦 Track an existing order →</a></div>
 
-<div class="voicebar"><button type="button" id="voiceGuideToggle" onclick="toggleGuide()">🔊 Voice Guide: OFF</button><select id="voiceLang"><option value="ur-PK">اردو</option><option value="en-US" selected>English</option></select><span class="hint">Turn this on and it will speak instructions as you move through the form. Tap 🎤 next to any box to fill it by speaking.</span></div>
+<div class="voicebar"><button type="button" id="voiceGuideToggle" onclick="toggleGuide(true)">🔊 Voice Guide: ON</button><button type="button" id="replayWelcome" onclick="playWelcome()">🔁 Replay Welcome</button><select id="voiceLang" onchange="onLangChange()"><option value="ur-PK">اردو</option><option value="en-US" selected>English</option></select><span class="hint">If you didn't hear a voice automatically, tap "Replay Welcome" once.</span></div>
 
 <form method="POST" enctype="multipart/form-data">
 <label>Company Name <button type="button" class="mic-btn" onclick="startVoice('company',this)">🎤</button></label><input name="company" id="company" required onfocus="guideField('company')">
@@ -587,7 +588,8 @@ button:hover{opacity:.92;transform:translateY(-1px)}
 <button>Submit Request →</button>
 </form></div>
 <script>
-let guideOn = false;
+let guideOn = true;
+let chosenVoice = null;
 const GUIDE = {
   company:{en:"Please type or say your company name.",ur:"اپنی کمپنی کا نام بولیں یا لکھیں۔"},
   name:{en:"Please say your full name.",ur:"اپنا نام بتائیں۔"},
@@ -597,23 +599,42 @@ const GUIDE = {
   material:{en:"Choose the material from the list.",ur:"فہرست سے میٹیریل منتخب کریں۔"},
   requirement:{en:"Describe your requirement in detail. You can also speak it using the microphone.",ur:"اپنی ضرورت تفصیل سے بتائیں، بول کر بھی بتا سکتے ہیں۔"}
 };
+const WELCOME = {
+  en:"Welcome to D R D Manufacturing Solutions! I'm here to help you place your order. Tell me, what would you like us to manufacture for you today? Please fill in your details below, and use the microphone buttons if you'd rather speak than type.",
+  ur:"ڈی آر ڈی مینوفیکچرنگ میں خوش آمدید۔ میں آپ کا آرڊر لینے کے لیے حاضر ہوں۔ بتائیں، آج آپ ہم سے کیا بنوانا چاہتے ہیں؟ نیچے اپنی تفصیلات پر کریں، اور بول کر بتانا چاہیں تو مائک بٹن استعمال کریں۔"
+};
+function pickVoice(lang){
+  const voices = window.speechSynthesis ? window.speechSynthesis.getVoices() : [];
+  const base = lang.split('-')[0];
+  const candidates = voices.filter(v => v.lang && v.lang.toLowerCase().startsWith(base));
+  const nicePick = candidates.find(v => /female|zira|samantha|susan|google uk english female|heera|gul/i.test(v.name));
+  return nicePick || candidates[0] || voices[0] || null;
+}
 function speak(text){
   if(!('speechSynthesis' in window)) return;
   window.speechSynthesis.cancel();
   const u = new SpeechSynthesisUtterance(text);
-  u.lang = document.getElementById('voiceLang').value;
+  const lang = document.getElementById('voiceLang').value;
+  u.lang = lang;
+  u.pitch = 1.15;
+  u.rate = 0.95;
+  u.volume = 1;
+  const v = pickVoice(lang);
+  if(v) u.voice = v;
   window.speechSynthesis.speak(u);
 }
-function toggleGuide(){
-  guideOn = !guideOn;
+function playWelcome(){
+  const isUr = document.getElementById('voiceLang').value.startsWith('ur');
+  speak(isUr ? WELCOME.ur : WELCOME.en);
+}
+function onLangChange(){ playWelcome(); }
+function toggleGuide(forceOn){
+  guideOn = (forceOn === true) ? true : !guideOn;
   const btn = document.getElementById('voiceGuideToggle');
   btn.textContent = (guideOn ? '🔊 Voice Guide: ON' : '🔊 Voice Guide: OFF');
   btn.classList.toggle('on', guideOn);
-  if(guideOn){
-    const isUr = document.getElementById('voiceLang').value.startsWith('ur');
-    speak(isUr ? "صوتی رہنمائی آن ہو گئی ہے۔ ہر خانے پر جائیں میں بتاؤں گا کیا لکھنا ہے۔" : "Voice guide is now on. I will tell you what to fill in each box.");
-  }
 }
+document.getElementById('voiceGuideToggle').onclick = function(){ toggleGuide(); };
 function guideField(key){
   if(!guideOn) return;
   const isUr = document.getElementById('voiceLang').value.startsWith('ur');
@@ -649,6 +670,18 @@ function startVoice(fieldId, btn){
   rec.onerror = function(){ btn.classList.remove('listening'); btn.textContent = '🎤'; };
   rec.start();
 }
+window.addEventListener('load', function(){
+  if('speechSynthesis' in window){
+    // voices sometimes load asynchronously - give it a moment, then greet automatically
+    if(window.speechSynthesis.getVoices().length){
+      setTimeout(playWelcome, 300);
+    } else {
+      window.speechSynthesis.onvoiceschanged = function(){ setTimeout(playWelcome, 300); };
+      setTimeout(playWelcome, 800); // fallback in case the event never fires
+    }
+  }
+});
+document.addEventListener('click', function once(){ document.removeEventListener('click', once); }, {once:true});
 </script>
 </body></html>'''
 SUCCESS_PAGE = '''<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><style>body{font-family:'Segoe UI',Arial,sans-serif;background:linear-gradient(160deg,#0d2b40,#123f5d 40%,#1d6fa5);min-height:100vh;display:flex;align-items:center;justify-content:center;padding:16px;margin:0}.box{background:white;max-width:460px;padding:40px 35px;border-radius:16px;box-shadow:0 10px 35px rgba(0,0,0,.25);text-align:center}.box h2{color:#198754;margin-top:0}.jobid{background:#f0f7f3;border:1.5px dashed #198754;border-radius:8px;padding:12px;font-size:20px;font-weight:bold;letter-spacing:1px;color:#123f5d;margin:14px 0}a.btnlink{display:block;padding:12px;border-radius:8px;color:white;text-decoration:none;font-weight:bold;margin-top:14px;background:linear-gradient(135deg,#123f5d,#1d6fa5)}a.plain{display:block;margin-top:14px;color:#1d6fa5;text-decoration:none;font-size:14px}</style></head><body><div class="box"><h2>✅ Request Submitted</h2><p>Please save this Job ID — you'll need it for quotation, payment and delivery reference.</p><div class="jobid">{{ job_id }}</div><a class="btnlink" href="/track/{{ job_id }}">📦 Track this order</a><a class="plain" href="/">← Submit another request</a></div></body></html>'''
@@ -722,6 +755,9 @@ button{background:#198754;color:white;border:0;padding:7px 10px;border-radius:5p
 .termpicker{background:#f8f9fa;border:1px solid #dce1ea;border-radius:8px;padding:10px;margin:6px 0;grid-column:1/-1}
 .termpicker label{font-weight:normal;display:flex;gap:6px;align-items:flex-start;margin:5px 0;font-size:13px}
 .termpicker input[type=checkbox]{width:auto;margin:2px 0 0}
+.client-card details{margin-top:8px}
+.client-card summary{cursor:pointer;font-weight:bold;color:#1d6fa5;padding:4px 0}
+.client-order{border-top:1px solid #eee;padding:8px 4px;font-size:12px}
 </style><script>
 const ALL_ORDERS = {{ orders_json|safe }};
 function tab(id,b){document.querySelectorAll('.tab').forEach(x=>x.classList.remove('active'));document.getElementById(id).classList.add('active');document.querySelectorAll('.tabs button').forEach(x=>x.classList.remove('active'));b.classList.add('active')}
@@ -754,10 +790,11 @@ function runSearch(q){
 <div class="searchbox"><span>🔎</span><input id="searchInput" placeholder="Search any order — Job ID, client name, phone, part name, status..." oninput="runSearch(this.value)" autocomplete="off"></div>
 <div id="searchResults"></div>
 <div class="cards"><div class="card"><b>Total Orders</b><div class="summary">{{summary.total_orders}}</div></div><div class="card"><b>Completed</b><div class="summary">{{summary.completed}}</div></div><div class="card"><b>In Progress</b><div class="summary">{{summary.in_progress}}</div></div><div class="card"><b>New</b><div class="summary">{{summary.new}}</div></div><div class="card"><b>Total Quoted</b><div class="summary">{{money(summary.total_quoted)}}</div></div><div class="card"><b>Total Paid</b><div class="summary">{{money(summary.total_paid)}}</div></div><div class="card"><b>Pending Payment</b><div class="summary">{{money(summary.pending_payment)}}</div></div><div class="card"><b>GST</b><div class="summary">{{money(summary.gst)}}</div></div></div>
-<div id="tabsBlock"><div class="tabs"><button class="active" onclick="tab('new',this)">📥 New</button><button onclick="tab('progress',this)">⏳ Quotations / Payment</button><button onclick="tab('done',this)">✅ Completed</button></div>
+<div id="tabsBlock"><div class="tabs"><button class="active" onclick="tab('new',this)">📥 New</button><button onclick="tab('progress',this)">⏳ Quotations / Payment</button><button onclick="tab('done',this)">✅ Completed</button><button onclick="tab('clients',this)">👥 Client Files</button></div>
 <div id="new" class="tab active"><h3>New Requests</h3>{% for req in requests %}{% if req.status=='New' %}<div class="card new"><b>{{req.job_id}}</b> — {{req.company}} / {{req.name}}<br><span class="small">{{req.time}} | {{req.whatsapp}}</span><p><b>Original Request:</b> {{req.part_name}} | Qty {{req.quantity}} | {{req.material}}<br>{{req.requirement}}</p>{% if req.file %}<a href="/uploads/{{req.file}}" target="_blank">View Drawing/File</a>{% endif %}<form action="/update/{{req.job_id}}" method="POST"><div class="grid"><label>Quotation Type<select name="quotation_type"><option value="standard">Standard Quotation</option><option value="detailed">Detailed / Technical & Commercial Proposal</option></select></label><label>RFQ / Reference No.<input name="rfq_no"></label><label>Project / Work Title<input name="project_title"></label></div><h4>Parts</h4><div class="partsbox" id="parts-{{req.job_id}}"><div class="partgrid small"><b>Part No.</b><b>Part Name</b><b>Description</b><b>Qty</b><b>Material</b><b>Price</b><b></b></div>{% for p in req.parts %}<div class="partgrid"><input name="part_no[]" value="{{p.part_no}}"><input name="part_name[]" value="{{p.part_name}}" required><textarea name="part_description[]">{{p.description}}</textarea><input name="part_quantity[]" value="{{p.quantity}}"><input name="part_material[]" value="{{p.material}}"><input class="part-price" oninput="updateTotal(this.closest('.partsbox'))" name="part_price[]" type="number" step="any" value="{{p.price}}"><button type="button" class="danger" onclick="delPart(this)">×</button></div>{% endfor %}</div><button type="button" onclick="addPart('parts-{{req.job_id}}')">+ Add Part</button> <span>Parts Total: <b class="part-total">{{money(req.base_price)}}</b></span><div class="grid"><label>GST %<input name="gst_percent" type="number" step="any" value="{{req.gst_percent}}"></label><label>GST<select name="gst_enabled"><option value="yes" {% if req.gst_enabled %}selected{% endif %}>Enabled</option><option value="no" {% if not req.gst_enabled %}selected{% endif %}>Disabled</option></select></label><label>WHT<select name="wht_enabled"><option value="use">Use Setting</option><option value="yes" {% if req.wht_enabled %}selected{% endif %}>Enable</option><option value="no" {% if not req.wht_enabled %}selected{% endif %}>Disable</option></select></label><label>WHT %<input name="wht_percent" type="number" step="any" value="{{req.wht_percent}}"></label><label>Delivery / Schedule<input name="delivery_time" required placeholder="5 working days"></label><label>Payment Terms<select name="payment_terms"><option value="50_50" {% if req.payment_terms=='50_50' %}selected{% endif %}>50% Advance + 50% before/at Delivery</option><option value="100_advance" {% if req.payment_terms=='100_advance' %}selected{% endif %}>100% Advance</option><option value="custom" {% if req.payment_terms=='custom' %}selected{% endif %}>Custom</option></select></label><label>Custom Payment Terms<textarea name="custom_payment_terms"></textarea></label><label>Material Specification<textarea name="material_specification"></textarea></label><label>Manufacturing Operations<textarea name="manufacturing_operations"></textarea></label><label>Finish / Surface Treatment<textarea name="finish_specification"></textarea></label><label>Inspection / QC<textarea name="inspection_qc"></textarea></label><label>Technical Specification<textarea name="technical_specification"></textarea></label><label>Technical Notes<textarea name="technical_notes"></textarea></label></div>{% if settings.terms_library %}<div class="termpicker"><b>Terms & Conditions — tick the ones that apply to this quotation</b>{% for c in settings.terms_library %}<label><input type="checkbox" name="selected_terms[]" value="{{c.id}}"> <span><b>{{c.title}}</b> — {{c.text}}</span></label>{% endfor %}</div>{% endif %}<div class="grid"><label>Remarks<textarea name="remarks"></textarea></label></div><button>Save & Send Quotation</button></form><form action="/delete/{{req.job_id}}" method="POST" style="margin-top:5px"><button class="danger">Delete</button></form></div>{% else %}{% endif %}{% endfor %}</div>
 <div id="progress" class="tab"><h3>Quotations Sent / Payment</h3>{% for req in requests %}{% if req.status=='Quotation Sent' %}<div class="card progress"><b>{{req.job_id}}</b> — {{req.company}} / {{req.name}}<p>Quotation: {{req.quotation_type}} | Parts: {{req.parts|length}} | Total: <b>{{money(req.net_payable)}}</b> | Delivery: {{req.delivery_time}}</p><a class="btnlink purple" href="/quotation/{{req.job_id}}.pdf" target="_blank">Quotation PDF</a><a class="btnlink" style="background:#25d366" href="{{req.wa_link}}" target="_blank">WhatsApp</a><a class="btnlink" style="background:#6c757d" href="/payment/{{req.job_id}}" target="_blank">Customer Payment Page</a><form action="/update/{{req.job_id}}" method="POST"><input type="hidden" name="quotation_type" value="{{req.quotation_type}}"><h4>Edit Parts / Price</h4><div class="partsbox" id="edit-{{req.job_id}}"><div class="partgrid small"><b>Part No.</b><b>Part Name</b><b>Description</b><b>Qty</b><b>Material</b><b>Price</b><b></b></div>{% for p in req.parts %}<div class="partgrid"><input name="part_no[]" value="{{p.part_no}}"><input name="part_name[]" value="{{p.part_name}}" required><textarea name="part_description[]">{{p.description}}</textarea><input name="part_quantity[]" value="{{p.quantity}}"><input name="part_material[]" value="{{p.material}}"><input name="part_price[]" type="number" step="any" value="{{p.price}}"><button type="button" class="danger" onclick="delPart(this)">×</button></div>{% endfor %}</div><button type="button" onclick="addPart('edit-{{req.job_id}}')">+ Add Part</button><div class="grid"><label>GST %<input name="gst_percent" type="number" step="any" value="{{req.gst_percent}}"></label><label>GST<select name="gst_enabled"><option value="yes" {% if req.gst_enabled %}selected{% endif %}>Enabled</option><option value="no" {% if not req.gst_enabled %}selected{% endif %}>Disabled</option></select></label><label>WHT<select name="wht_enabled"><option value="yes" {% if req.wht_enabled %}selected{% endif %}>Enabled</option><option value="no" {% if not req.wht_enabled %}selected{% endif %}>Disabled</option></select></label><label>WHT %<input name="wht_percent" type="number" step="any" value="{{req.wht_percent}}"></label><label>Delivery<input name="delivery_time" value="{{req.delivery_time}}" required></label><label>Payment Terms<select name="payment_terms"><option value="50_50" {% if req.payment_terms=='50_50' %}selected{% endif %}>50/50</option><option value="100_advance" {% if req.payment_terms=='100_advance' %}selected{% endif %}>100% Advance</option><option value="custom" {% if req.payment_terms=='custom' %}selected{% endif %}>Custom</option></select></label><label>Custom Terms<textarea name="custom_payment_terms">{{req.custom_payment_terms}}</textarea></label><label>RFQ No.<input name="rfq_no" value="{{req.rfq_no}}"></label><label>Reference No.<input name="reference_no" value="{{req.reference_no}}"></label><label>Project Title<input name="project_title" value="{{req.project_title}}"></label><label>Technical Specification<textarea name="technical_specification">{{req.technical_specification}}</textarea></label><label>Material Specification<textarea name="material_specification">{{req.material_specification}}</textarea></label><label>Manufacturing Operations<textarea name="manufacturing_operations">{{req.manufacturing_operations}}</textarea></label><label>Finish<textarea name="finish_specification">{{req.finish_specification}}</textarea></label><label>Inspection / QC<textarea name="inspection_qc">{{req.inspection_qc}}</textarea></label><label>Technical Notes<textarea name="technical_notes">{{req.technical_notes}}</textarea></label></div>{% if settings.terms_library %}<div class="termpicker"><b>Terms & Conditions — tick the ones that apply to this quotation</b>{% for c in settings.terms_library %}<label><input type="checkbox" name="selected_terms[]" value="{{c.id}}" {% if c.id in req.selected_terms %}checked{% endif %}> <span><b>{{c.title}}</b> — {{c.text}}</span></label>{% endfor %}</div>{% endif %}<div class="grid"><label>Remarks<textarea name="remarks">{{req.remarks}}</textarea></label></div><button>Update & Recalculate</button></form><hr><b>Payment:</b> {{req.payment_status}} | Advance: {{money(req.advance_paid)}} | Balance Due: {{money(req.balance_due)}}<br><span class="small">Advance stage: {{req.advance_payment_status}} | Balance stage: {{req.balance_payment_status}}</span><br>{% if req.payment_status=='Submitted' %}Ref: {{req.transaction_id}} | {{req.payment_date}} {% if req.payment_file %}<a href="/uploads/{{req.payment_file}}" target="_blank">Proof</a>{% endif %}<form action="/verify-payment/{{req.job_id}}" method="POST"><button class="info">Verify Submitted Payment</button></form>{% endif %}{% if req.payment_status=='Verified' %}<b style="color:#198754">Payment Verified</b>{% endif %}<form action="/complete/{{req.job_id}}" method="POST" style="margin-top:8px"><button class="info">Mark Completed / Invoice</button></form><form action="/delete/{{req.job_id}}" method="POST" style="margin-top:5px"><button class="danger">Delete</button></form></div>{% endif %}{% endfor %}</div>
 <div id="done" class="tab"><h3>Completed Orders</h3>{% for req in requests %}{% if req.status=='Completed' %}<div class="card done"><b>{{req.job_id}}</b> — {{req.company}} / {{req.name}}<p>Invoice: {{req.invoice_number}} | Total: {{money(req.net_payable)}} | Payment: {{req.payment_status}}</p><a class="btnlink" style="background:#198754" href="/invoice/{{req.job_id}}.pdf" target="_blank">Invoice PDF</a><a class="btnlink" style="background:#25d366" href="{{req.wa_link}}" target="_blank">WhatsApp</a><form action="/delete/{{req.job_id}}" method="POST" style="margin-top:5px"><button class="danger">Delete</button></form></div>{% endif %}{% endfor %}</div>
+<div id="clients" class="tab"><h3>Client Files</h3><p class="small">Every client's full order history in one place — no more hunting across tabs.</p>{% for c in clients %}<div class="card client-card"><b>{{c.company or 'Unknown Company'}}</b> — {{c.name}}<br><span class="small">📱 {{c.whatsapp or '—'}}</span><p><b>{{c.total_orders}}</b> order(s) &nbsp;|&nbsp; <b>{{c.completed}}</b> completed &nbsp;|&nbsp; Total value: <b>{{c.total_value_fmt}}</b></p><details><summary>View order history ({{c.orders|length}})</summary>{% for o in c.orders %}<div class="client-order"><b>{{o.job_id}}</b> — {{o.parts}} — <span class="small">{{o.status}} | {{o.total}} | {{o.time}}</span><br>{% if o.q_url %}<a class="btnlink purple" href="{{o.q_url}}" target="_blank">Quotation</a>{% endif %}{% if o.i_url %}<a class="btnlink" style="background:#198754" href="{{o.i_url}}" target="_blank">Invoice</a>{% endif %}{% if o.wa_url and o.wa_url != '#' %}<a class="btnlink" style="background:#25d366" href="{{o.wa_url}}" target="_blank">WhatsApp</a>{% endif %}</div>{% endfor %}</details></div>{% else %}<p class="small">No clients yet.</p>{% endfor %}</div>
 </div></div></body></html>'''
 
 
@@ -859,6 +896,45 @@ def build_orders_index(reqs):
     return out
 
 
+def build_clients_index(reqs):
+    """Groups every order by client (WhatsApp number is the unique key, since
+    that's what's guaranteed to be filled in) so the admin can see one client's
+    whole order history in a single file instead of hunting through every tab."""
+    clients = {}
+    for r in reqs:
+        key = r.get('whatsapp') or f"{r.get('company','')}|{r.get('name','')}"
+        c = clients.setdefault(key, {
+            'key': key, 'company': r.get('company', ''), 'name': r.get('name', ''),
+            'whatsapp': r.get('whatsapp', ''), 'orders': [], 'total_orders': 0,
+            'completed': 0, 'total_value': 0.0, 'last_time': ''
+        })
+        if r.get('company'):
+            c['company'] = r['company']
+        if r.get('name'):
+            c['name'] = r['name']
+        part_names = ', '.join(p.get('part_name', '') for p in r.get('parts', []) if p.get('part_name'))
+        c['orders'].append({
+            'job_id': r.get('job_id', ''), 'status': r.get('status', 'New'),
+            'parts': part_names or '—', 'total': money(r.get('net_payable')),
+            'time': r.get('time', ''),
+            'q_url': url_for('quotation_pdf', job_id=r['job_id']) if r.get('status') != 'New' else '',
+            'i_url': url_for('invoice_pdf', job_id=r['job_id']) if r.get('status') == 'Completed' else '',
+            'wa_url': r.get('wa_link') or ''
+        })
+        c['total_orders'] += 1
+        if r.get('status') == 'Completed':
+            c['completed'] += 1
+        c['total_value'] += safe_float(r.get('net_payable'))
+        if r.get('time', '') > c['last_time']:
+            c['last_time'] = r.get('time', '')
+    out = list(clients.values())
+    for c in out:
+        c['total_value_fmt'] = money(c['total_value'])
+        c['orders'].sort(key=lambda o: o['time'], reverse=True)
+    out.sort(key=lambda c: c['last_time'], reverse=True)
+    return out
+
+
 @app.route('/track')
 def track_order():
     job_id = request.args.get('job_id', '').strip()
@@ -882,7 +958,9 @@ def track_order_direct(job_id):
 def admin_dashboard():
     reqs = load_requests()
     orders_json = json.dumps(build_orders_index(reqs))
-    return render_template_string(ADMIN_PAGE, requests=reqs, summary=summary_data(reqs), settings=load_settings(), orders_json=orders_json)
+    clients = build_clients_index(reqs)
+    return render_template_string(ADMIN_PAGE, requests=reqs, summary=summary_data(reqs), settings=load_settings(),
+                                   orders_json=orders_json, clients=clients)
 
 
 @app.route('/settings', methods=['GET', 'POST'])

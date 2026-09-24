@@ -47,7 +47,8 @@ DEFAULT_SETTINGS = {
     'welcome_message_ur': ("ڈی آر ڈی مینوفیکچرنگ میں خوش آمدید۔ میں آپ کا آرڈر لینے کے لیے حاضر ہوں۔ بتائیں، آج آپ ہم سے کیا بنوانا "
                             "چاہتے ہیں؟ نیچے اپنی تفصیلات پر کریں، اور بول کر بتانا چاہیں تو مائک بٹن استعمال کریں۔"),
     'admin_auto_refresh': True,
-    'admin_notify_sound': True
+    'admin_notify_sound': True,
+    'portfolio': []
 }
 
 FALLBACK_TERMS = ('Quoted prices are based on the stated scope, quantities and specifications. Any change in drawing, '
@@ -84,6 +85,11 @@ def load_settings():
     data['welcome_pitch'] = min(2.0, max(0.5, safe_float(data.get('welcome_pitch'), 1.1)))
     data['welcome_rate'] = min(1.5, max(0.5, safe_float(data.get('welcome_rate'), 0.93)))
     data['welcome_volume'] = min(1.0, max(0.0, safe_float(data.get('welcome_volume'), 1.0)))
+    portfolio = data.get('portfolio', [])
+    if not isinstance(portfolio, list):
+        portfolio = []
+    data['portfolio'] = [{'file': str(p.get('file', '')), 'caption': str(p.get('caption', ''))}
+                          for p in portfolio if isinstance(p, dict) and p.get('file')]
     return data
 
 
@@ -585,6 +591,17 @@ body{font-family:'Segoe UI',Arial,sans-serif;background:linear-gradient(160deg,#
 .track-link{text-align:right;margin:-6px 0 14px}
 .track-link a{color:#1d6fa5;text-decoration:none;font-weight:bold;font-size:13px}
 .track-link a:hover{text-decoration:underline}
+.option-bar{display:flex;gap:8px;flex-wrap:wrap;margin:-4px 0 14px}
+.option-bar a{flex:1;min-width:140px;text-align:center;padding:10px 8px;border-radius:8px;background:#eef3f9;color:#123f5d;text-decoration:none;font-weight:bold;font-size:12.5px;border:1.5px solid #d6e6f5;transition:.15s}
+.option-bar a:hover{background:#123f5d;color:white}
+.portfolio-wrap{max-width:900px;margin:26px auto 0;overflow:hidden}
+.portfolio-wrap h3{text-align:center;color:white;margin:0 0 12px;font-size:17px;opacity:.95}
+.portfolio-track{display:flex;gap:16px;width:max-content;animation:scrollLeft 28s linear infinite}
+.portfolio-track:hover{animation-play-state:paused}
+.portfolio-item{flex:0 0 auto;width:160px;text-align:center;color:white;font-size:12px}
+.portfolio-item img{width:160px;height:120px;object-fit:cover;border-radius:10px;box-shadow:0 4px 14px rgba(0,0,0,.35);display:block}
+.portfolio-item span{display:block;margin-top:6px;opacity:.85}
+@keyframes scrollLeft{from{transform:translateX(0)}to{transform:translateX(-50%)}}
 .voicebar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;background:linear-gradient(135deg,#f0f7ff,#eaf3fb);border:1.5px solid #d6e6f5;border-radius:10px;padding:10px 12px;margin:14px 0}
 .voicebar select{width:auto;margin:0;padding:6px 8px;font-size:13px}
 #voiceGuideToggle,#replayWelcome{width:auto;margin:0;padding:8px 14px;font-size:13px;background:#6c757d;background-image:none}
@@ -599,11 +616,11 @@ input,select,textarea{width:100%;box-sizing:border-box;padding:11px;margin:6px 0
 input:focus,select:focus,textarea:focus{outline:none;border-color:#1d6fa5;box-shadow:0 0 0 3px rgba(29,111,165,.12)}
 button{width:100%;padding:14px;background:linear-gradient(135deg,#123f5d,#1d6fa5);color:white;border:0;border-radius:8px;font-weight:bold;font-size:15px;margin-top:18px;cursor:pointer;transition:.15s}
 button:hover{opacity:.92;transform:translateY(-1px)}
-</style></head><body><div class="box"><div class="brand"><h2>⚙️ DRD Manufacturing Solutions</h2><p>Engineering & Manufacturing Order Portal</p></div><div class="track-link"><a href="/track">📦 Track an existing order →</a></div>
+</style></head><body><div class="box"><div class="brand"><h2>⚙️ DRD Manufacturing Solutions</h2><p>Engineering & Manufacturing Order Portal</p></div><div class="option-bar"><a href="#orderForm">📝 Submit New Order</a><a href="/track">📦 Track by Job ID</a><a href="/my-orders">📋 View All My Orders</a></div>
 
 <div class="voicebar"><button type="button" id="voiceGuideToggle" onclick="toggleGuide(true)">🔊 Voice Guide: ON</button><button type="button" id="replayWelcome" onclick="playWelcome()">🔁 Replay Welcome</button><select id="voiceLang" onchange="onLangChange()"><option value="ur-PK" {% if settings.welcome_voice_lang.startswith('ur') %}selected{% endif %}>اردو</option><option value="en-US" {% if settings.welcome_voice_lang=='en-US' %}selected{% endif %}>English (US)</option><option value="en-GB" {% if settings.welcome_voice_lang=='en-GB' %}selected{% endif %}>English (UK)</option><option value="en-IN" {% if settings.welcome_voice_lang=='en-IN' %}selected{% endif %}>English (India)</option></select><span class="hint">If you didn't hear a voice automatically, tap "Replay Welcome" once.</span></div>
 
-<form method="POST" enctype="multipart/form-data">
+<form method="POST" enctype="multipart/form-data" id="orderForm">
 <label>Company Name <button type="button" class="mic-btn" onclick="startVoice('company',this)">🎤</button></label><input name="company" id="company" required onfocus="guideField('company')">
 <label>Client Name <button type="button" class="mic-btn" onclick="startVoice('name',this)">🎤</button></label><input name="name" id="name" required onfocus="guideField('name')">
 <label>WhatsApp</label><div style="display:flex;gap:8px"><select name="country_code" style="width:35%"><option value="92">+92</option><option value="966">+966</option><option value="971">+971</option><option value="44">+44</option><option value="1">+1</option></select><input name="whatsapp_num" id="whatsapp_num" required placeholder="3175240272" onfocus="guideField('whatsapp_num')"></div>
@@ -615,6 +632,7 @@ button:hover{opacity:.92;transform:translateY(-1px)}
 <label>Drawing / CAD / Reference File</label><input type="file" name="drawing_file" accept=".step,.stp,.sldprt,.dxf,.dwg,.stl,.pdf,.zip,image/*">
 <button>Submit Request →</button>
 </form></div>
+{% if settings.portfolio %}<div class="portfolio-wrap"><h3>🛠️ A Glimpse of What We've Built</h3><div class="portfolio-track">{% for item in settings.portfolio %}<div class="portfolio-item"><img src="/uploads/{{item.file}}" loading="lazy" alt="{{item.caption}}"><span>{{item.caption}}</span></div>{% endfor %}{% for item in settings.portfolio %}<div class="portfolio-item"><img src="/uploads/{{item.file}}" loading="lazy" alt="{{item.caption}}"><span>{{item.caption}}</span></div>{% endfor %}</div></div>{% endif %}
 <script>
 let guideOn = true;
 let chosenVoice = null;
@@ -746,6 +764,30 @@ a.plain{display:block;text-align:center;margin-top:16px;color:#1d6fa5;text-decor
 <a class="btnlink" style="background:linear-gradient(135deg,#123f5d,#1d6fa5)" href="/payment/{{req.job_id}}">💳 Make / Confirm Payment</a>{% endif %}
 {% if req.status == 'Completed' %}<a class="btnlink" style="background:#198754" href="/invoice/{{req.job_id}}.pdf" target="_blank">🧾 View Invoice PDF</a>{% endif %}
 <a class="plain" href="/track">← Track another order</a></div></body></html>'''
+
+MY_ORDERS_FORM_PAGE = '''<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><style>body{font-family:'Segoe UI',Arial,sans-serif;background:linear-gradient(160deg,#0d2b40,#123f5d 40%,#1d6fa5);min-height:100vh;display:flex;align-items:center;justify-content:center;padding:16px;margin:0}.box{max-width:420px;background:white;padding:34px 30px;border-radius:16px;box-shadow:0 10px 35px rgba(0,0,0,.25);text-align:center}input{width:100%;box-sizing:border-box;padding:13px;margin:14px 0;border:1.5px solid #e1e5ec;border-radius:8px;text-align:center;font-size:15px}input:focus{outline:none;border-color:#1d6fa5}button{width:100%;padding:13px;background:linear-gradient(135deg,#123f5d,#1d6fa5);color:white;border:0;border-radius:8px;font-weight:bold;font-size:15px;cursor:pointer}a{color:#1d6fa5;text-decoration:none;font-size:14px}</style></head><body><div class="box"><h2>📋 View All My Orders</h2><p style="color:#666;font-size:14px">Enter the WhatsApp number you used when placing your order(s).</p><form method="GET" action="/my-orders"><input name="phone" placeholder="e.g. 923001234567" required><button>Show My Orders →</button></form>{% if not_found %}<p style="color:#dc3545;font-size:14px">No orders found for that number.</p>{% endif %}<br><a href="/">← Back to request form</a></div></body></html>'''
+
+MY_ORDERS_LIST_PAGE = '''<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><style>
+body{font-family:'Segoe UI',Arial,sans-serif;background:linear-gradient(160deg,#0d2b40,#123f5d 40%,#1d6fa5);min-height:100vh;padding:24px 16px;margin:0}
+.box{max-width:640px;margin:20px auto;background:white;padding:28px;border-radius:16px;box-shadow:0 10px 35px rgba(0,0,0,.25)}
+.summary-bar{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:16px}
+.summary-bar div{flex:1;min-width:120px;background:#f0f7ff;border-radius:10px;padding:12px;text-align:center}
+.summary-bar b{font-size:20px;color:#123f5d;display:block}
+.order-item{border:1px solid #eee;border-radius:10px;padding:12px 14px;margin-bottom:10px}
+.badge{display:inline-block;padding:3px 12px;border-radius:20px;font-size:12px;font-weight:bold;color:white}
+.btnlink{display:inline-block;padding:8px 12px;border-radius:6px;color:white;text-decoration:none;margin:3px 4px 0 0;font-size:13px;font-weight:bold}
+a.plain{display:block;text-align:center;margin-top:16px;color:#1d6fa5;text-decoration:none;font-size:14px}
+</style></head><body><div class="box"><h2 style="margin-top:0">👋 Hello {{client_name}}</h2>
+<div class="summary-bar"><div><b>{{total_orders}}</b>Total Orders</div><div><b>{{money(total_paid)}}</b>Total Paid</div></div>
+{% for o in orders %}<div class="order-item"><b>{{o.job_id}}</b> <span class="badge" style="background:{{ '#dc3545' if o.status=='New' else ('#e6a100' if o.status=='Quotation Sent' else '#198754') }}">{{o.status}}</span><br>
+<span style="font-size:13px;color:#666">{{ o.parts[0].part_name if o.parts else '' }}{% if o.parts|length > 1 %} +{{ o.parts|length - 1 }} more{% endif %} | {{o.time}}</span><br>
+{% if o.status != 'New' %}<span style="font-size:13px">Total: <b>{{money(o.net_payable)}}</b> | Payment: {{o.payment_status}}</span><br>
+<a class="btnlink" style="background:#6f42c1" href="/quotation/{{o.job_id}}.pdf" target="_blank">Quotation</a>
+<a class="btnlink" style="background:linear-gradient(135deg,#123f5d,#1d6fa5)" href="/payment/{{o.job_id}}">Payment</a>{% endif %}
+{% if o.status == 'Completed' %}<a class="btnlink" style="background:#198754" href="/invoice/{{o.job_id}}.pdf" target="_blank">Invoice</a>{% endif %}
+<a class="btnlink" style="background:#6c757d" href="/track/{{o.job_id}}">Track</a>
+</div>{% endfor %}
+<a class="plain" href="/">← Submit a new order</a></div></body></html>'''
 PAYMENT_PAGE = '''<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><style>body{font-family:Arial;background:#f4f4f9;padding:18px}.box{max-width:600px;margin:auto;background:white;padding:25px;border-radius:10px}input,select{width:100%;box-sizing:border-box;padding:10px;margin:6px 0 12px}button{width:100%;padding:12px;background:#198754;color:white;border:0;border-radius:6px;font-weight:bold}.info{background:#eef6ff;padding:12px;border-radius:7px}</style></head><body><div class="box"><h2>Order Confirmation & Payment</h2><div class="info"><b>Job ID:</b> {{ req.job_id }}<br><b>Total:</b> {{ money(req.net_payable) }}<br><b>Payment Terms:</b> {{ payment_terms_text(req, settings) }}<br><b>Advance Required:</b> {{ money(req.advance_required) }}<br><b>Balance Due:</b> {{ money(req.balance_due) }}</div><form method="POST" action="/payment-submit/{{ req.job_id }}" enctype="multipart/form-data"><label>Payment Stage</label><select name="payment_stage"><option value="advance">Advance Payment</option><option value="balance">Balance / Final Payment</option><option value="full">Full Payment</option></select><label>Payment Amount</label><input type="number" step="any" name="payment_amount" required><label>Transaction / Reference ID</label><input name="transaction_id" required><label>Payment Date</label><input type="date" name="payment_date" required><label>Payment Proof</label><input type="file" name="payment_file" accept="image/*,.pdf"><label>Confirm Order</label><select name="customer_confirmed"><option value="yes">Yes</option></select><button>Submit Payment Confirmation</button></form></div></body></html>'''
 PAYMENT_SUCCESS = '''<!doctype html><html><body style="font-family:Arial;text-align:center;background:#f4f4f9;padding:50px"><div style="background:white;max-width:500px;margin:auto;padding:35px;border-radius:10px"><h2 style="color:#198754">Payment Submitted</h2><p>Job ID: <b>{{ job_id }}</b></p><p>Your payment proof and reference have been received for manual verification.</p></div></body></html>'''
 
@@ -785,7 +827,7 @@ function testVoice(){
   if(v) u.voice = v;
   window.speechSynthesis.speak(u);
 }
-</script></head><body><div class="box"><a href="/drd-secure-admin">← Admin</a><h2>Settings</h2><p style="color:#777;font-size:13px">All fields below are optional — leave anything blank and it will simply not appear on quotations/invoices.</p><form method="POST"><div class="grid">{% for key,label in [('company_name','Company Name'),('address','Address'),('phone','Phone'),('email','Email'),('website','Website'),('ntn','NTN'),('strn','STRN / GST'),('bank_name','Bank Name'),('account_title','Account Title'),('account_number','Account Number'),('iban','IBAN')] %}<div><label>{{label}}</label><input name="{{key}}" value="{{s[key]}}"></div>{% endfor %}</div><label>Payment Instructions</label><textarea name="payment_instructions" rows="3">{{s.payment_instructions}}</textarea><h3>Terms & Conditions Library</h3><p style="color:#777;font-size:13px;margin-top:-4px">Add each clause once here. When making a quotation you'll just tick the ones that apply — no retyping every time. Tip: add new clauses at the bottom rather than deleting old ones once a quotation has already been sent to a customer.</p><div id="termsBox">{% for c in s.terms_library %}<div class="rowbox termrow"><input name="term_title[]" value="{{c.title}}" placeholder="Clause title e.g. Delivery Delay"><textarea name="term_text[]" rows="2" placeholder="Clause text shown on the PDF">{{c.text}}</textarea><button type="button" onclick="this.closest('.termrow').remove()" style="background:#dc3545">Remove</button></div>{% endfor %}</div><button type="button" onclick="addTermRow()">+ Add Clause</button><h3>Default / Fallback Wording</h3><p style="color:#777;font-size:13px;margin-top:-4px">Used only when no clause above is ticked on a particular quotation.</p><textarea name="default_terms_conditions" rows="4" placeholder="Leave blank to use the built-in default wording">{{s.default_terms_conditions}}</textarea><h3>Tax</h3><label>GST %</label><input name="gst_percent" type="number" step="any" value="{{s.gst_percent}}"><label><input style="width:auto" type="checkbox" name="gst_enabled" {% if s.gst_enabled %}checked{% endif %}> Enable GST</label><label>WHT %</label><input name="wht_percent" type="number" step="any" value="{{s.wht_percent}}"><label><input style="width:auto" type="checkbox" name="wht_enabled" {% if s.wht_enabled %}checked{% endif %}> Enable WHT</label><label>WHT Mode</label><select name="wht_mode"><option value="deduct" {% if s.wht_mode=='deduct' %}selected{% endif %}>Deduct</option><option value="add" {% if s.wht_mode=='add' %}selected{% endif %}>Add</option></select><h3>Default Payment Terms</h3><select name="payment_terms"><option value="50_50" {% if s.payment_terms=='50_50' %}selected{% endif %}>50% Advance + 50% before/at Delivery</option><option value="100_advance" {% if s.payment_terms=='100_advance' %}selected{% endif %}>100% Advance</option><option value="custom" {% if s.payment_terms=='custom' %}selected{% endif %}>Custom</option></select><label>Custom Payment Terms</label><textarea name="custom_payment_terms">{{s.custom_payment_terms}}</textarea><h3>Notification WhatsApp Numbers</h3>{% for i in range(3) %}<label>Notification Number {{i+1}}</label><input name="notification_{{i}}" value="{{s.notification_numbers[i]}}" placeholder="923175240272">{% endfor %}<p>Normal wa.me links cannot automatically push notifications; these numbers are stored for notification links/manual use. Automatic WhatsApp notifications require an API/provider.</p><h3>🔊 Client Welcome Voice</h3><p style="color:#777;font-size:13px;margin-top:-4px">Controls the voice that greets clients on the order form. Voices come from the visitor's own browser, so use "Test Voice" below (in this browser) to check how it sounds before saving.</p><div class="grid"><div><label>Language</label><select name="welcome_voice_lang" id="wvl"><option value="en-US" {% if s.welcome_voice_lang=='en-US' %}selected{% endif %}>English (US)</option><option value="en-GB" {% if s.welcome_voice_lang=='en-GB' %}selected{% endif %}>English (UK)</option><option value="en-IN" {% if s.welcome_voice_lang=='en-IN' %}selected{% endif %}>English (India)</option><option value="ur-PK" {% if s.welcome_voice_lang=='ur-PK' %}selected{% endif %}>Urdu</option></select></div><div><label>Preferred Voice Name (optional)</label><input name="welcome_voice_hint" id="wvh" value="{{s.welcome_voice_hint}}" placeholder="e.g. Zira, Google, Samantha"></div></div><div class="grid"><div><label>Pitch ({{s.welcome_pitch}})</label><input type="range" name="welcome_pitch" id="wvp" min="0.5" max="2" step="0.05" value="{{s.welcome_pitch}}" oninput="document.getElementById('wvpVal').textContent=this.value"> <span id="wvpVal" style="font-size:12px;color:#777">{{s.welcome_pitch}}</span></div><div><label>Speed ({{s.welcome_rate}})</label><input type="range" name="welcome_rate" id="wvr" min="0.5" max="1.5" step="0.05" value="{{s.welcome_rate}}" oninput="document.getElementById('wvrVal').textContent=this.value"> <span id="wvrVal" style="font-size:12px;color:#777">{{s.welcome_rate}}</span></div><div><label>Volume ({{s.welcome_volume}})</label><input type="range" name="welcome_volume" id="wvv" min="0" max="1" step="0.05" value="{{s.welcome_volume}}" oninput="document.getElementById('wvvVal').textContent=this.value"> <span id="wvvVal" style="font-size:12px;color:#777">{{s.welcome_volume}}</span></div></div><label>Welcome Message (English)</label><textarea name="welcome_message_en" id="wme" rows="3">{{s.welcome_message_en}}</textarea><label>Welcome Message (Urdu)</label><textarea name="welcome_message_ur" id="wmu" rows="3">{{s.welcome_message_ur}}</textarea><button type="button" onclick="testVoice()" style="background:#25d366;margin-bottom:14px">🔊 Test Voice</button><h3>Admin Dashboard Notifications</h3><label><input style="width:auto" type="checkbox" name="admin_auto_refresh" {% if s.admin_auto_refresh %}checked{% endif %}> Auto-refresh admin dashboard when a new order arrives</label><label><input style="width:auto" type="checkbox" name="admin_notify_sound" {% if s.admin_notify_sound %}checked{% endif %}> Play a sound + browser notification on new orders</label><button>Save Settings</button></form></div></body></html>'''
+</script></head><body><div class="box"><a href="/drd-secure-admin">← Admin</a><h2>Settings</h2><p style="color:#777;font-size:13px">All fields below are optional — leave anything blank and it will simply not appear on quotations/invoices.</p><form method="POST" enctype="multipart/form-data"><div class="grid">{% for key,label in [('company_name','Company Name'),('address','Address'),('phone','Phone'),('email','Email'),('website','Website'),('ntn','NTN'),('strn','STRN / GST'),('bank_name','Bank Name'),('account_title','Account Title'),('account_number','Account Number'),('iban','IBAN')] %}<div><label>{{label}}</label><input name="{{key}}" value="{{s[key]}}"></div>{% endfor %}</div><label>Payment Instructions</label><textarea name="payment_instructions" rows="3">{{s.payment_instructions}}</textarea><h3>Terms & Conditions Library</h3><p style="color:#777;font-size:13px;margin-top:-4px">Add each clause once here. When making a quotation you'll just tick the ones that apply — no retyping every time. Tip: add new clauses at the bottom rather than deleting old ones once a quotation has already been sent to a customer.</p><div id="termsBox">{% for c in s.terms_library %}<div class="rowbox termrow"><input name="term_title[]" value="{{c.title}}" placeholder="Clause title e.g. Delivery Delay"><textarea name="term_text[]" rows="2" placeholder="Clause text shown on the PDF">{{c.text}}</textarea><button type="button" onclick="this.closest('.termrow').remove()" style="background:#dc3545">Remove</button></div>{% endfor %}</div><button type="button" onclick="addTermRow()">+ Add Clause</button><h3>Default / Fallback Wording</h3><p style="color:#777;font-size:13px;margin-top:-4px">Used only when no clause above is ticked on a particular quotation.</p><textarea name="default_terms_conditions" rows="4" placeholder="Leave blank to use the built-in default wording">{{s.default_terms_conditions}}</textarea><h3>Tax</h3><label>GST %</label><input name="gst_percent" type="number" step="any" value="{{s.gst_percent}}"><label><input style="width:auto" type="checkbox" name="gst_enabled" {% if s.gst_enabled %}checked{% endif %}> Enable GST</label><label>WHT %</label><input name="wht_percent" type="number" step="any" value="{{s.wht_percent}}"><label><input style="width:auto" type="checkbox" name="wht_enabled" {% if s.wht_enabled %}checked{% endif %}> Enable WHT</label><label>WHT Mode</label><select name="wht_mode"><option value="deduct" {% if s.wht_mode=='deduct' %}selected{% endif %}>Deduct</option><option value="add" {% if s.wht_mode=='add' %}selected{% endif %}>Add</option></select><h3>Default Payment Terms</h3><select name="payment_terms"><option value="50_50" {% if s.payment_terms=='50_50' %}selected{% endif %}>50% Advance + 50% before/at Delivery</option><option value="100_advance" {% if s.payment_terms=='100_advance' %}selected{% endif %}>100% Advance</option><option value="custom" {% if s.payment_terms=='custom' %}selected{% endif %}>Custom</option></select><label>Custom Payment Terms</label><textarea name="custom_payment_terms">{{s.custom_payment_terms}}</textarea><h3>Notification WhatsApp Numbers</h3>{% for i in range(3) %}<label>Notification Number {{i+1}}</label><input name="notification_{{i}}" value="{{s.notification_numbers[i]}}" placeholder="923175240272">{% endfor %}<p>Normal wa.me links cannot automatically push notifications; these numbers are stored for notification links/manual use. Automatic WhatsApp notifications require an API/provider.</p><h3>🔊 Client Welcome Voice</h3><p style="color:#777;font-size:13px;margin-top:-4px">Controls the voice that greets clients on the order form. Voices come from the visitor's own browser, so use "Test Voice" below (in this browser) to check how it sounds before saving.</p><div class="grid"><div><label>Language</label><select name="welcome_voice_lang" id="wvl"><option value="en-US" {% if s.welcome_voice_lang=='en-US' %}selected{% endif %}>English (US)</option><option value="en-GB" {% if s.welcome_voice_lang=='en-GB' %}selected{% endif %}>English (UK)</option><option value="en-IN" {% if s.welcome_voice_lang=='en-IN' %}selected{% endif %}>English (India)</option><option value="ur-PK" {% if s.welcome_voice_lang=='ur-PK' %}selected{% endif %}>Urdu</option></select></div><div><label>Preferred Voice Name (optional)</label><input name="welcome_voice_hint" id="wvh" value="{{s.welcome_voice_hint}}" placeholder="e.g. Zira, Google, Samantha"></div></div><div class="grid"><div><label>Pitch ({{s.welcome_pitch}})</label><input type="range" name="welcome_pitch" id="wvp" min="0.5" max="2" step="0.05" value="{{s.welcome_pitch}}" oninput="document.getElementById('wvpVal').textContent=this.value"> <span id="wvpVal" style="font-size:12px;color:#777">{{s.welcome_pitch}}</span></div><div><label>Speed ({{s.welcome_rate}})</label><input type="range" name="welcome_rate" id="wvr" min="0.5" max="1.5" step="0.05" value="{{s.welcome_rate}}" oninput="document.getElementById('wvrVal').textContent=this.value"> <span id="wvrVal" style="font-size:12px;color:#777">{{s.welcome_rate}}</span></div><div><label>Volume ({{s.welcome_volume}})</label><input type="range" name="welcome_volume" id="wvv" min="0" max="1" step="0.05" value="{{s.welcome_volume}}" oninput="document.getElementById('wvvVal').textContent=this.value"> <span id="wvvVal" style="font-size:12px;color:#777">{{s.welcome_volume}}</span></div></div><label>Welcome Message (English)</label><textarea name="welcome_message_en" id="wme" rows="3">{{s.welcome_message_en}}</textarea><label>Welcome Message (Urdu)</label><textarea name="welcome_message_ur" id="wmu" rows="3">{{s.welcome_message_ur}}</textarea><button type="button" onclick="testVoice()" style="background:#25d366;margin-bottom:14px">🔊 Test Voice</button><h3>Admin Dashboard Notifications</h3><label><input style="width:auto" type="checkbox" name="admin_auto_refresh" {% if s.admin_auto_refresh %}checked{% endif %}> Auto-refresh admin dashboard when a new order arrives</label><label><input style="width:auto" type="checkbox" name="admin_notify_sound" {% if s.admin_notify_sound %}checked{% endif %}> Play a sound + browser notification on new orders</label><h3>🖼️ Portfolio Gallery (shown as a scrolling slider on the client order page)</h3><p style="color:#777;font-size:13px;margin-top:-4px">Upload photos of parts / jobs you've completed. They'll auto-scroll at the bottom of the client's order form.</p>{% if s.portfolio %}<div class="grid">{% for item in s.portfolio %}<div class="rowbox" style="text-align:center"><img src="/uploads/{{item.file}}" style="width:100%;height:90px;object-fit:cover;border-radius:6px"><input name="portfolio_caption[]" value="{{item.caption}}" placeholder="Caption"><input type="hidden" name="portfolio_file[]" value="{{item.file}}"><label style="font-weight:normal;font-size:12px"><input style="width:auto" type="checkbox" name="remove_portfolio[]" value="{{item.file}}"> Remove this photo</label></div>{% endfor %}</div>{% endif %}<label>Add New Photos</label><input type="file" name="portfolio_images" accept="image/*" multiple><label>Caption for new photo(s) (optional, applies to all newly added)</label><input name="portfolio_new_caption" placeholder="e.g. CNC milled bracket"><button>Save Settings</button></form></div></body></html>'''
 
 ADMIN_PAGE = '''<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>DRD Admin</title><style>
 body{font-family:Arial;background:#f0f2f7;margin:0;color:#222}
@@ -1091,6 +1133,26 @@ def track_order_direct(job_id):
     return render_template_string(TRACK_STATUS_PAGE, req=req, money=money)
 
 
+@app.route('/my-orders')
+def my_orders():
+    """Lets a client see every order they've placed with us (matched by their
+    WhatsApp number), not just a single Job ID — handy once they have several."""
+    phone_raw = request.args.get('phone', '').strip()
+    if not phone_raw:
+        return render_template_string(MY_ORDERS_FORM_PAGE, not_found=False)
+    phone = ''.join(filter(str.isdigit, phone_raw))
+    phone = phone[1:] if phone.startswith('0') and len(phone) > 10 else phone
+    reqs = load_requests()
+    matches = [r for r in reqs if ''.join(filter(str.isdigit, str(r.get('whatsapp', '')))).endswith(phone[-9:])] if phone else []
+    if not matches:
+        return render_template_string(MY_ORDERS_FORM_PAGE, not_found=True)
+    matches.sort(key=lambda x: x.get('time', ''), reverse=True)
+    total_orders = len(matches)
+    total_paid = sum(safe_float(r.get('advance_paid')) for r in matches)
+    return render_template_string(MY_ORDERS_LIST_PAGE, orders=matches, money=money, total_orders=total_orders,
+                                   total_paid=total_paid, client_name=matches[0].get('name', ''))
+
+
 @app.route('/drd-secure-admin')
 def admin_dashboard():
     reqs = load_requests()
@@ -1142,6 +1204,25 @@ def settings_page():
         s['welcome_message_ur'] = request.form.get('welcome_message_ur', '').strip() or DEFAULT_SETTINGS['welcome_message_ur']
         s['admin_auto_refresh'] = request.form.get('admin_auto_refresh') == 'on'
         s['admin_notify_sound'] = request.form.get('admin_notify_sound') == 'on'
+        # Portfolio gallery: keep existing photos (with edited captions) minus any removed,
+        # then append newly uploaded photos.
+        remove_set = set(request.form.getlist('remove_portfolio[]'))
+        existing_files = request.form.getlist('portfolio_file[]')
+        existing_captions = request.form.getlist('portfolio_caption[]')
+        portfolio = []
+        for i, fname in enumerate(existing_files):
+            if fname in remove_set:
+                continue
+            caption = existing_captions[i].strip() if i < len(existing_captions) else ''
+            portfolio.append({'file': fname, 'caption': caption})
+        new_caption = request.form.get('portfolio_new_caption', '').strip()
+        for f in request.files.getlist('portfolio_images'):
+            if f and f.filename:
+                safe_name = os.path.basename(f.filename)
+                stored_name = f"portfolio_{datetime.now().strftime('%y%m%d%H%M%S%f')}_{safe_name}"
+                f.save(os.path.join(UPLOAD_FOLDER, stored_name))
+                portfolio.append({'file': stored_name, 'caption': new_caption})
+        s['portfolio'] = portfolio
         save_settings(s)
         return redirect(url_for('settings_page'))
     return render_template_string(SETTINGS_PAGE, s=load_settings())
@@ -1312,8 +1393,12 @@ def quotation_pdf(job_id):
     if not req:
         return 'Job not found', 404
     try:
-        return send_file(build_document_pdf(req, 'quotation'), mimetype='application/pdf', as_attachment=False,
-                          download_name=f'Quotation_{job_id}.pdf')
+        resp = send_file(build_document_pdf(req, 'quotation'), mimetype='application/pdf', as_attachment=False,
+                          download_name=f'Quotation_{job_id}.pdf', conditional=False, etag=False, last_modified=None, max_age=0)
+        resp.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
+        resp.headers['Pragma'] = 'no-cache'
+        resp.headers['Expires'] = '0'
+        return resp
     except Exception as e:
         return f'PDF error: {e}', 500
 
@@ -1324,8 +1409,12 @@ def invoice_pdf(job_id):
     if not req:
         return 'Job not found', 404
     try:
-        return send_file(build_document_pdf(req, 'invoice'), mimetype='application/pdf', as_attachment=False,
-                          download_name=f'Invoice_{job_id}.pdf')
+        resp = send_file(build_document_pdf(req, 'invoice'), mimetype='application/pdf', as_attachment=False,
+                          download_name=f'Invoice_{job_id}.pdf', conditional=False, etag=False, last_modified=None, max_age=0)
+        resp.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
+        resp.headers['Pragma'] = 'no-cache'
+        resp.headers['Expires'] = '0'
+        return resp
     except Exception as e:
         return f'PDF error: {e}', 500
 

@@ -4,7 +4,7 @@ import urllib.parse
 from io import BytesIO
 from datetime import datetime
 
-from flask import Flask, request, redirect, url_for, send_from_directory, render_template_string, send_file
+from flask import Flask, request, redirect, url_for, send_from_directory, render_template_string, send_file, make_response
 from reportlab.pdfgen import canvas
 from reportlab.lib import colors
 from reportlab.lib.units import mm
@@ -121,6 +121,10 @@ def money(v):
         return 'Rs. 0.00'
 
 
+def now_str():
+    return datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+
+
 def safe_float(v, default=0.0):
     """Never let a bad/blank number crash a request."""
     try:
@@ -199,8 +203,17 @@ def make_whatsapp_link(req, settings):
         lines.append(f"*GST ({safe_float(req.get('gst_percent')):g}%):* Rs. {safe_float(req.get('gst_amount')):,.2f}")
     if req.get('wht_enabled'):
         lines.append(f"*WHT ({safe_float(req.get('wht_percent')):g}%):* Rs. {safe_float(req.get('wht_amount')):,.2f}")
-    lines += [f"*Net Payable:* *Rs. {safe_float(req.get('net_payable')):,.2f}*",
-              f"*Delivery:* {req.get('delivery_time', 'Pending')}",
+    net_total = safe_float(req.get('net_payable'))
+    advance_paid = safe_float(req.get('advance_paid'))
+    balance_due = safe_float(req.get('balance_due'), max(0.0, net_total - advance_paid))
+    lines += [f"*Order Total:* Rs. {net_total:,.2f}"]
+    if advance_paid > 0 or balance_due > 0 or status == 'Completed':
+        lines.append(f"*Payments Received:* Rs. {advance_paid:,.2f}")
+        if balance_due > 0.01:
+            lines.append(f"*Balance Due (Pending):* Rs. {balance_due:,.2f} — please complete this so your part(s) can be delivered.")
+        else:
+            lines.append("*Payment Status:* Fully Paid ✅")
+    lines += [f"*Delivery:* {req.get('delivery_time', 'Pending')}",
               f"*Payment Terms:* {payment_terms_text(req, settings)}"]
     if req.get('remarks'):
         lines += ['', f"*Remarks:* {req['remarks']}"]
@@ -237,12 +250,16 @@ def load_requests():
                 'advance_payment_file': '', 'balance_payment_file': '', 'advance_payment_status': 'Not Submitted', 'balance_payment_status': 'Not Submitted',
                 'invoice_number': '', 'invoice_date': '', 'rfq_no': '', 'reference_no': '', 'project_title': '', 'technical_specification': '',
                 'material_specification': '', 'manufacturing_operations': '', 'finish_specification': '', 'inspection_qc': '',
-                'technical_notes': '', 'selected_terms': [], 'time': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                'technical_notes': '', 'selected_terms': [], 'time': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                'last_activity': req.get('time', datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
             }
             for k, v in defaults.items():
                 if k not in req:
                     req[k] = v
                     changed = True
+            if 'updated_at' not in req:
+                req['updated_at'] = req.get('time', datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
+                changed = True
             old = req.get('parts')
             if not isinstance(old, list) or not old:
                 req['parts'] = ensure_parts(req)
@@ -511,6 +528,42 @@ def build_document_pdf(req, document_type='quotation'):
     c.drawRightString(right, y - 10, f"{label}: {money(net)}")
     y -= 25
 
+    # Payment status block — shows exactly how much has actually been paid vs
+    # what's still outstanding, so this never gets confused with the order total.
+    advance_paid = safe_float(req.get('advance_paid'))
+    balance_due = safe_float(req.get('balance_due'), max(0.0, net - advance_paid))
+    if advance_paid > 0 or balance_due > 0 or req.get('status') == 'Completed':
+        if y - 40 < bottom:
+            footer(page_no)
+            c.showPage()
+            page_no += 1
+            header()
+            y = top - 25
+        c.setFont('Helvetica-Bold', 9)
+        c.setFillColor(colors.HexColor('#123f5d'))
+        c.drawString(left, y, 'PAYMENT STATUS')
+        y -= 12
+        c.setFont('Helvetica', 8.5)
+        c.setFillColor(colors.black)
+        c.drawString(left, y, f"Advance / Payments Received: {money(advance_paid)}")
+        y -= 11
+        if balance_due > 0.01:
+            c.setFillColor(colors.HexColor('#b02a37'))
+            c.setFont('Helvetica-Bold', 8.5)
+            c.drawString(left, y, f"Balance Due (Pending): {money(balance_due)}")
+            y -= 11
+            c.setFillColor(colors.black)
+            c.setFont('Helvetica', 7.8)
+            y, _ = draw_wrapped(c, "The remaining balance must be received before the final part(s) can be delivered.",
+                                 left, y, right - left, 'Helvetica', 7.8, 9, 2)
+        else:
+            c.setFillColor(colors.HexColor('#198754'))
+            c.setFont('Helvetica-Bold', 8.5)
+            c.drawString(left, y, "Fully Paid — Thank you!")
+            y -= 11
+            c.setFillColor(colors.black)
+        y -= 10
+
     sections = []
     if req.get('delivery_time'):
         dt = req['delivery_time']
@@ -760,6 +813,7 @@ a.plain{display:block;text-align:center;margin-top:16px;color:#1d6fa5;text-decor
 <div class="step"><span class="{{ 'done' if req.payment_status=='Verified' else 'pending' }}">3️⃣ Payment {{ 'Verified ✓' if req.payment_status=='Verified' else '(' + req.payment_status + ')' }}</span></div>
 <div class="step"><span class="{{ 'done' if req.status=='Completed' else 'pending' }}">4️⃣ Order {{ 'Completed ✓' if req.status=='Completed' else '(in progress)' }}</span></div>
 {% if req.status != 'New' %}<p style="font-size:15px"><b>Total:</b> {{ money(req.net_payable) }} &nbsp; <b>Delivery:</b> {{ req.delivery_time }}</p>
+<p style="font-size:14px;background:#f8f9fa;border-radius:8px;padding:10px 12px"><b>Payments Received:</b> {{ money(req.advance_paid) }}{% if req.balance_due and req.balance_due > 0 %}<br><b style="color:#b02a37">Balance Due (Pending):</b> {{ money(req.balance_due) }}{% else %}<br><b style="color:#198754">Fully Paid ✅</b>{% endif %}</p>
 <a class="btnlink" style="background:#6f42c1" href="/quotation/{{req.job_id}}.pdf" target="_blank">📄 View Quotation PDF</a>
 <a class="btnlink" style="background:linear-gradient(135deg,#123f5d,#1d6fa5)" href="/payment/{{req.job_id}}">💳 Make / Confirm Payment</a>{% endif %}
 {% if req.status == 'Completed' %}<a class="btnlink" style="background:#198754" href="/invoice/{{req.job_id}}.pdf" target="_blank">🧾 View Invoice PDF</a>{% endif %}
@@ -781,7 +835,7 @@ a.plain{display:block;text-align:center;margin-top:16px;color:#1d6fa5;text-decor
 <div class="summary-bar"><div><b>{{total_orders}}</b>Total Orders</div><div><b>{{money(total_paid)}}</b>Total Paid</div></div>
 {% for o in orders %}<div class="order-item"><b>{{o.job_id}}</b> <span class="badge" style="background:{{ '#dc3545' if o.status=='New' else ('#e6a100' if o.status=='Quotation Sent' else '#198754') }}">{{o.status}}</span><br>
 <span style="font-size:13px;color:#666">{{ o.parts[0].part_name if o.parts else '' }}{% if o.parts|length > 1 %} +{{ o.parts|length - 1 }} more{% endif %} | {{o.time}}</span><br>
-{% if o.status != 'New' %}<span style="font-size:13px">Total: <b>{{money(o.net_payable)}}</b> | Payment: {{o.payment_status}}</span><br>
+{% if o.status != 'New' %}<span style="font-size:13px">Total: <b>{{money(o.net_payable)}}</b> | Paid: <b>{{money(o.advance_paid)}}</b>{% if o.balance_due and o.balance_due > 0 %} | <b style="color:#b02a37">Balance: {{money(o.balance_due)}}</b>{% else %} | <b style="color:#198754">Fully Paid</b>{% endif %}</span><br>
 <a class="btnlink" style="background:#6f42c1" href="/quotation/{{o.job_id}}.pdf" target="_blank">Quotation</a>
 <a class="btnlink" style="background:linear-gradient(135deg,#123f5d,#1d6fa5)" href="/payment/{{o.job_id}}">Payment</a>{% endif %}
 {% if o.status == 'Completed' %}<a class="btnlink" style="background:#198754" href="/invoice/{{o.job_id}}.pdf" target="_blank">Invoice</a>{% endif %}
@@ -849,6 +903,7 @@ body{font-family:Arial;background:#f0f2f7;margin:0;color:#222}
 .card:hover{box-shadow:0 4px 14px #ccd2de}
 .flash-highlight{animation:flashPulse 1.3s ease-in-out 2;}
 @keyframes flashPulse{0%{box-shadow:0 0 0 4px rgba(255,193,7,.95)}50%{box-shadow:0 0 0 8px rgba(255,193,7,.25)}100%{box-shadow:0 0 0 4px rgba(255,193,7,0)}}
+@keyframes toastIn{from{opacity:0;transform:translate(-50%,-12px)}to{opacity:1;transform:translate(-50%,0)}}
 .tabs{display:flex;gap:8px;flex-wrap:wrap;margin:18px 0}
 .tabs button{padding:10px 14px;border:0;border-radius:20px;background:#6c757d;color:white;font-weight:bold}
 .tabs button.active{background:#007bff}
@@ -875,7 +930,15 @@ button{background:#198754;color:white;border:0;padding:7px 10px;border-radius:5p
 const ALL_ORDERS = {{ orders_json|safe }};
 const AUTO_REFRESH = {{ settings.admin_auto_refresh|tojson }};
 const NOTIFY_SOUND = {{ settings.admin_notify_sound|tojson }};
-let LAST_KNOWN_TIME = {{ (requests[0].time if requests else '')|tojson }};
+let LAST_KNOWN_TIME = {{ latest_time|tojson }};
+let LAST_PENDING_PAY = {{ summary.pending_payment_count|default(0)|tojson }};
+function showToast(msg, color){
+  const t=document.createElement('div');
+  t.textContent=msg;
+  t.style.cssText='position:fixed;top:16px;left:50%;transform:translateX(-50%);background:'+(color||'#198754')+';color:white;padding:12px 22px;border-radius:30px;font-weight:bold;font-size:14px;box-shadow:0 6px 20px rgba(0,0,0,.3);z-index:999;animation:toastIn .25s ease-out';
+  document.body.appendChild(t);
+  setTimeout(()=>{ t.style.transition='opacity .4s'; t.style.opacity='0'; setTimeout(()=>t.remove(),400); }, 3200);
+}
 function beep(){
   try{
     const Ctx = window.AudioContext || window.webkitAudioContext;
@@ -898,10 +961,13 @@ function checkForNewOrders(){
   fetch('/api/order-status').then(r=>r.json()).then(d=>{
     if(d.latest_time && d.latest_time > LAST_KNOWN_TIME){
       LAST_KNOWN_TIME = d.latest_time;
+      const newPending = d.pending_payment_count > LAST_PENDING_PAY;
       if(NOTIFY_SOUND){
         beep();
         if('Notification' in window && Notification.permission === 'granted'){
-          new Notification('📥 New Order Received', {body: 'A new client just submitted a request — refreshing dashboard...'});
+          new Notification(newPending ? '💰 Payment Submitted' : '📥 Dashboard Activity', {
+            body: newPending ? 'A client submitted payment confirmation for verification.' : 'A new order or update just came in — refreshing...'
+          });
         }
       }
       if(AUTO_REFRESH){ setTimeout(()=>location.reload(), 1800); }
@@ -909,6 +975,20 @@ function checkForNewOrders(){
   }).catch(()=>{});
 }
 if(AUTO_REFRESH || NOTIFY_SOUND){ setInterval(checkForNewOrders, 12000); }
+const FLASH_MSG = {{ flash_msg|tojson }};
+const FLASH_TAB = {{ flash_tab|tojson }};
+const FLASH_JOB = {{ flash_job|tojson }};
+window.addEventListener('DOMContentLoaded', function(){
+  if(FLASH_MSG){
+    showToast('✅ ' + FLASH_MSG, '#198754');
+    if(FLASH_TAB && FLASH_JOB){
+      setTimeout(function(){ goToOrder(FLASH_JOB, FLASH_TAB); }, 300);
+    }
+    if(window.history && window.history.replaceState){
+      window.history.replaceState({}, '', '/drd-secure-admin');
+    }
+  }
+});
 function tab(id,b){document.querySelectorAll('.tab').forEach(x=>x.classList.remove('active'));document.getElementById(id).classList.add('active');document.querySelectorAll('.tabs button').forEach(x=>x.classList.remove('active'));b.classList.add('active')}
 function addPart(id){
   let box=document.getElementById(id);
@@ -985,6 +1065,7 @@ def summary_data(reqs):
         'total_quoted': sum(safe_float(r.get('net_payable')) for r in reqs),
         'total_paid': sum(safe_float(r.get('payment_amount')) for r in reqs if r.get('payment_status') == 'Verified'),
         'pending_payment': sum(safe_float(r.get('balance_due', r.get('net_payable', 0))) for r in reqs if r.get('status') != 'Completed'),
+        'pending_payment_count': sum(r.get('payment_status') == 'Submitted' for r in reqs),
         'gst': sum(safe_float(r.get('gst_amount')) for r in reqs)
     }
 
@@ -1042,7 +1123,7 @@ def client_form():
             'advance_payment_file': '', 'balance_payment_file': '', 'advance_payment_status': 'Not Submitted', 'balance_payment_status': 'Not Submitted',
             'invoice_number': '', 'invoice_date': '', 'rfq_no': '', 'reference_no': '', 'project_title': '', 'technical_specification': '',
             'material_specification': '', 'manufacturing_operations': '', 'finish_specification': '', 'inspection_qc': '', 'technical_notes': '',
-            'time': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            'time': datetime.now().strftime('%Y-%m-%d %H:%M:%S'), 'updated_at': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         }
         existing.append(new)
         save_all_requests(existing)
@@ -1158,17 +1239,31 @@ def admin_dashboard():
     reqs = load_requests()
     orders_json = json.dumps(build_orders_index(reqs))
     clients = build_clients_index(reqs)
-    return render_template_string(ADMIN_PAGE, requests=reqs, summary=summary_data(reqs), settings=load_settings(),
-                                   orders_json=orders_json, clients=clients)
+    latest_time = max((r.get('updated_at') or r.get('time', '') for r in reqs), default='')
+    flash_msg = request.args.get('msg', '')
+    flash_tab = request.args.get('tab', '')
+    flash_job = request.args.get('job', '')
+    resp = make_response(render_template_string(ADMIN_PAGE, requests=reqs, summary=summary_data(reqs), settings=load_settings(),
+                                                  orders_json=orders_json, clients=clients, latest_time=latest_time,
+                                                  flash_msg=flash_msg, flash_tab=flash_tab, flash_job=flash_job))
+    resp.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
+    resp.headers['Pragma'] = 'no-cache'
+    resp.headers['Expires'] = '0'
+    return resp
 
 
 @app.route('/api/order-status')
 def order_status_api():
-    """Tiny, cheap endpoint the admin dashboard polls to detect new orders
-    without re-downloading the whole page each time."""
+    """Tiny, cheap endpoint the admin dashboard polls to detect ANY activity —
+    a new order, a payment submission, a quotation edit, etc — not just new orders."""
     reqs = load_requests()
-    latest_time = reqs[0].get('time', '') if reqs else ''
-    return {'total_orders': len(reqs), 'new_count': sum(r.get('status') == 'New' for r in reqs), 'latest_time': latest_time}
+    latest_time = max((r.get('updated_at') or r.get('time', '') for r in reqs), default='')
+    return {
+        'total_orders': len(reqs),
+        'new_count': sum(r.get('status') == 'New' for r in reqs),
+        'pending_payment_count': sum(r.get('payment_status') == 'Submitted' for r in reqs),
+        'latest_time': latest_time
+    }
 
 
 @app.route('/settings', methods=['GET', 'POST'])
@@ -1294,9 +1389,10 @@ def update_job(job_id):
         req['advance_required'] = round(npv * adv_ratio, 2)
         req['balance_due'] = max(0, round(npv - safe_float(req.get('advance_paid')), 2))
         req['status'] = 'Quotation Sent'
+        req['updated_at'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         break
     save_all_requests(all_reqs)
-    return redirect(url_for('admin_dashboard'))
+    return redirect(url_for('admin_dashboard', msg=f'Quotation saved for {job_id}', tab='progress', job=job_id))
 
 
 @app.route('/payment/<job_id>')
@@ -1329,6 +1425,7 @@ def payment_submit(job_id):
         req['payment_date'] = date
         req['payment_file'] = filename
         req['payment_status'] = 'Submitted'
+        req['updated_at'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         if stage in ('advance', 'full'):
             req['advance_transaction_id'] = tx
             req['advance_payment_file'] = filename
@@ -1351,6 +1448,7 @@ def verify_payment(job_id):
         if req.get('job_id') != job_id:
             continue
         req['payment_status'] = 'Verified'
+        req['updated_at'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         amount = safe_float(req.get('payment_amount'))
         req['advance_paid'] = round(safe_float(req.get('advance_paid')) + amount, 2)
         req['balance_due'] = max(0, round(safe_float(req.get('net_payable')) - req['advance_paid'], 2))
@@ -1371,7 +1469,7 @@ def verify_payment(job_id):
                 req['balance_payment_status'] = 'Verified'
         break
     save_all_requests(all_reqs)
-    return redirect(url_for('admin_dashboard'))
+    return redirect(url_for('admin_dashboard', msg=f'Payment verified for {job_id}', tab='progress', job=job_id))
 
 
 @app.route('/complete/<job_id>', methods=['POST'])
@@ -1380,11 +1478,12 @@ def complete_job(job_id):
     for req in all_reqs:
         if req.get('job_id') == job_id:
             req['status'] = 'Completed'
+            req['updated_at'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
             req['invoice_number'] = req.get('invoice_number') or next_invoice_number(req)
             req['invoice_date'] = datetime.now().strftime('%Y-%m-%d')
             break
     save_all_requests(all_reqs)
-    return redirect(url_for('admin_dashboard'))
+    return redirect(url_for('admin_dashboard', msg=f'Order {job_id} marked Completed — invoice generated', tab='done', job=job_id))
 
 
 @app.route('/quotation/<job_id>.pdf')
@@ -1423,7 +1522,7 @@ def invoice_pdf(job_id):
 def delete_job(job_id):
     reqs = [r for r in load_requests() if r.get('job_id') != job_id]
     save_all_requests(reqs)
-    return redirect(url_for('admin_dashboard'))
+    return redirect(url_for('admin_dashboard', msg=f'Order {job_id} deleted'))
 
 
 @app.route('/uploads/<filename>')

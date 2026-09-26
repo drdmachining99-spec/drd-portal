@@ -4,7 +4,8 @@ import urllib.parse
 from io import BytesIO
 from datetime import datetime
 
-from flask import Flask, request, redirect, url_for, send_from_directory, render_template_string, send_file, make_response
+from flask import Flask, request, redirect, url_for, send_from_directory, render_template_string, send_file, make_response, session
+from functools import wraps
 from reportlab.pdfgen import canvas
 from reportlab.lib import colors
 from reportlab.lib.units import mm
@@ -12,6 +13,7 @@ from reportlab.pdfbase.pdfmetrics import stringWidth
 from pypdf import PdfReader, PdfWriter
 
 app = Flask(__name__)
+app.secret_key = os.environ.get('SECRET_KEY') or 'drd-portal-default-secret-set-SECRET_KEY-env-for-persistent-sessions'
 UPLOAD_FOLDER = 'uploads'
 REQUESTS_FILE = 'requests.json'
 SETTINGS_FILE = 'settings.json'
@@ -123,6 +125,43 @@ def money(v):
 
 def now_str():
     return datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+
+
+def admin_required(view_func):
+    """Guards admin routes with a PIN-based login. Backward compatible: if the
+    admin hasn't set an Admin PIN in Settings yet, admin routes stay open (as
+    before) so nobody gets locked out by this update. Setting a PIN in Settings
+    turns login protection on automatically from then on."""
+    @wraps(view_func)
+    def wrapped(*args, **kwargs):
+        pin = load_settings().get('admin_pin', '')
+        if pin and not session.get('admin_ok'):
+            return redirect(url_for('admin_login', next=request.path))
+        return view_func(*args, **kwargs)
+    return wrapped
+
+
+def is_job_verified(job_id):
+    return job_id in session.get('verified_jobs', [])
+
+
+def mark_job_verified(job_id):
+    verified = session.get('verified_jobs', [])
+    if job_id not in verified:
+        verified.append(job_id)
+        # Keep this list small - a session tracking hundreds of jobs is unusual.
+        session['verified_jobs'] = verified[-50:]
+        session.modified = True
+
+
+def no_cache(resp):
+    """Marks a client-facing response as never-cacheable, so a client always
+    sees the current data instead of a stale browser-cached copy — the same
+    fix already used for the PDF and admin routes, applied everywhere else too."""
+    resp.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
+    resp.headers['Pragma'] = 'no-cache'
+    resp.headers['Expires'] = '0'
+    return resp
 
 
 def normalize_phone(raw):
@@ -688,7 +727,7 @@ button{width:100%;padding:14px;background:linear-gradient(135deg,#123f5d,#1d6fa5
 button:hover{opacity:.92;transform:translateY(-1px)}
 </style></head><body><div class="box"><div class="brand"><h2>⚙️ DRD Manufacturing Solutions</h2><p>Engineering & Manufacturing Order Portal</p></div><div class="option-bar"><a href="#orderForm">📝 Submit New Order</a><a href="/track">📦 Track by Job ID</a><a href="/my-orders">📋 View All My Orders</a></div>
 
-<div class="voicebar"><button type="button" id="voiceGuideToggle" onclick="toggleGuide(true)">🔊 Voice Guide: ON</button><button type="button" id="replayWelcome" onclick="playWelcome()">🔁 Replay Welcome</button><select id="voiceLang" onchange="onLangChange()"><option value="ur-PK" {% if settings.welcome_voice_lang.startswith('ur') %}selected{% endif %}>اردو</option><option value="en-US" {% if settings.welcome_voice_lang=='en-US' %}selected{% endif %}>English (US)</option><option value="en-GB" {% if settings.welcome_voice_lang=='en-GB' %}selected{% endif %}>English (UK)</option><option value="en-IN" {% if settings.welcome_voice_lang=='en-IN' %}selected{% endif %}>English (India)</option></select><span class="hint">If you didn't hear a voice automatically, tap "Replay Welcome" once.</span></div>
+<div class="voicebar"><button type="button" id="voiceGuideToggle" onclick="toggleGuide(true)">🔊 Voice Guide: ON</button><button type="button" id="replayWelcome" onclick="replayWelcome()">🔁 Replay Welcome</button><select id="voiceLang" onchange="onLangChange()"><option value="ur-PK" {% if settings.welcome_voice_lang.startswith('ur') %}selected{% endif %}>اردو</option><option value="en-US" {% if settings.welcome_voice_lang=='en-US' %}selected{% endif %}>English (US)</option><option value="en-GB" {% if settings.welcome_voice_lang=='en-GB' %}selected{% endif %}>English (UK)</option><option value="en-IN" {% if settings.welcome_voice_lang=='en-IN' %}selected{% endif %}>English (India)</option></select><span class="hint">If you didn't hear a voice automatically, tap "Replay Welcome" once.</span></div>
 
 <form method="POST" enctype="multipart/form-data" id="orderForm">
 <label>Company Name <button type="button" class="mic-btn" onclick="startVoice('company',this)">🎤</button></label><input name="company" id="company" required onfocus="guideField('company')">
@@ -751,11 +790,24 @@ function speak(text){
   if(v) u.voice = v;
   window.speechSynthesis.speak(u);
 }
-function playWelcome(){
+let welcomePlayed = false;
+function speakWelcome(){
   const isUr = document.getElementById('voiceLang').value.startsWith('ur');
   speak(isUr ? WELCOME.ur : WELCOME.en);
 }
-function onLangChange(){ playWelcome(); }
+function playWelcome(){
+  // Used for automatic triggers (page load / first tap) — only fires once per visit.
+  if(welcomePlayed) return;
+  welcomePlayed = true;
+  speakWelcome();
+}
+function replayWelcome(){
+  // Explicit "Replay Welcome" button press — always speaks, regardless of whether
+  // it already auto-played, since the person is asking for it on purpose.
+  welcomePlayed = true;
+  speakWelcome();
+}
+function onLangChange(){ welcomePlayed = true; speakWelcome(); }
 function toggleGuide(forceOn){
   guideOn = (forceOn === true) ? true : !guideOn;
   const btn = document.getElementById('voiceGuideToggle');
@@ -809,10 +861,20 @@ window.addEventListener('load', function(){
     }
   }
 });
-document.addEventListener('click', function once(){ document.removeEventListener('click', once); }, {once:true});
+window.addEventListener('pageshow', function(e){
+  // Browsers restore a page from back-forward cache (bfcache) on back/forward
+  // navigation without re-firing 'load', which used to make the welcome voice
+  // play inconsistently. This makes every visit — fresh or revisited — greet the same way.
+  if(e.persisted && 'speechSynthesis' in window){ setTimeout(playWelcome, 300); }
+});
+document.addEventListener('click', function once(){ document.removeEventListener('click', once); playWelcome(); }, {once:true});
+document.addEventListener('touchstart', function once(){ document.removeEventListener('touchstart', once); playWelcome(); }, {once:true});
+document.addEventListener('keydown', function once(){ document.removeEventListener('keydown', once); playWelcome(); }, {once:true});
 </script>
 </body></html>'''
 SUCCESS_PAGE = '''<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><style>body{font-family:'Segoe UI',Arial,sans-serif;background:linear-gradient(160deg,#0d2b40,#123f5d 40%,#1d6fa5);min-height:100vh;display:flex;align-items:center;justify-content:center;padding:16px;margin:0}.box{background:white;max-width:460px;padding:40px 35px;border-radius:16px;box-shadow:0 10px 35px rgba(0,0,0,.25);text-align:center}.box h2{color:#198754;margin-top:0}.jobid{background:#f0f7f3;border:1.5px dashed #198754;border-radius:8px;padding:12px;font-size:20px;font-weight:bold;letter-spacing:1px;color:#123f5d;margin:14px 0}a.btnlink{display:block;padding:12px;border-radius:8px;color:white;text-decoration:none;font-weight:bold;margin-top:14px;background:linear-gradient(135deg,#123f5d,#1d6fa5)}a.plain{display:block;margin-top:14px;color:#1d6fa5;text-decoration:none;font-size:14px}</style></head><body><div class="box"><h2>✅ Request Submitted</h2><p>Please save this Job ID — you'll need it for quotation, payment and delivery reference.</p><div class="jobid">{{ job_id }}</div><a class="btnlink" href="/track/{{ job_id }}">📦 Track this order</a><a class="plain" href="/">← Submit another request</a></div></body></html>'''
+
+JOB_VERIFY_PAGE = '''<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><style>body{font-family:'Segoe UI',Arial,sans-serif;background:linear-gradient(160deg,#0d2b40,#123f5d 40%,#1d6fa5);min-height:100vh;display:flex;align-items:center;justify-content:center;padding:16px;margin:0}.box{max-width:420px;background:white;padding:34px 30px;border-radius:16px;box-shadow:0 10px 35px rgba(0,0,0,.25);text-align:center}input{width:100%;box-sizing:border-box;padding:13px;margin:14px 0;border:1.5px solid #e1e5ec;border-radius:8px;text-align:center;font-size:15px}input:focus{outline:none;border-color:#1d6fa5}button{width:100%;padding:13px;background:linear-gradient(135deg,#123f5d,#1d6fa5);color:white;border:0;border-radius:8px;font-weight:bold;font-size:15px;cursor:pointer}a{color:#1d6fa5;text-decoration:none;font-size:14px}</style></head><body><div class="box"><h2>🔒 Confirm It's You</h2><p style="color:#666;font-size:14px">For your privacy, please confirm the WhatsApp number used for order <b>{{job_id}}</b> before we show its details.</p><form method="POST" action="/verify-access/{{job_id}}"><input type="hidden" name="next" value="{{next}}"><input name="phone" placeholder="e.g. 923001234567" required autofocus><button>Confirm & View →</button></form>{% if error %}<p style="color:#dc3545;font-size:14px">{{error}}</p>{% endif %}<br><a href="/">← Back to request form</a></div></body></html>'''
 
 TRACK_FORM_PAGE = '''<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><style>body{font-family:'Segoe UI',Arial,sans-serif;background:linear-gradient(160deg,#0d2b40,#123f5d 40%,#1d6fa5);min-height:100vh;display:flex;align-items:center;justify-content:center;padding:16px;margin:0}.box{max-width:420px;background:white;padding:34px 30px;border-radius:16px;box-shadow:0 10px 35px rgba(0,0,0,.25);text-align:center}input{width:100%;box-sizing:border-box;padding:13px;margin:14px 0;border:1.5px solid #e1e5ec;border-radius:8px;text-align:center;font-size:15px}input:focus{outline:none;border-color:#1d6fa5}button{width:100%;padding:13px;background:linear-gradient(135deg,#123f5d,#1d6fa5);color:white;border:0;border-radius:8px;font-weight:bold;font-size:15px;cursor:pointer}a{color:#1d6fa5;text-decoration:none;font-size:14px}</style></head><body><div class="box"><h2>📦 Track My Order</h2><p style="color:#666;font-size:14px">Enter the Job ID you received after submitting your request.</p><form method="GET" action="/track"><input name="job_id" placeholder="e.g. DRD-260923-0001" required><button>Track Order →</button></form>{% if not_found %}<p style="color:#dc3545;font-size:14px">No order found with that Job ID.</p>{% endif %}<br><a href="/">← Back to request form</a></div></body></html>'''
 
@@ -901,7 +963,9 @@ function testVoice(){
   if(v) u.voice = v;
   window.speechSynthesis.speak(u);
 }
-</script></head><body><div class="box"><a href="/drd-secure-admin">← Admin</a><h2>Settings</h2><p style="color:#777;font-size:13px">All fields below are optional — leave anything blank and it will simply not appear on quotations/invoices.</p><form method="POST" enctype="multipart/form-data"><div class="grid">{% for key,label in [('company_name','Company Name'),('address','Address'),('phone','Phone'),('email','Email'),('website','Website'),('ntn','NTN'),('strn','STRN / GST'),('bank_name','Bank Name'),('account_title','Account Title'),('account_number','Account Number'),('iban','IBAN')] %}<div><label>{{label}}</label><input name="{{key}}" value="{{s[key]}}"></div>{% endfor %}</div><label>Payment Instructions</label><textarea name="payment_instructions" rows="3">{{s.payment_instructions}}</textarea><h3>Terms & Conditions Library</h3><p style="color:#777;font-size:13px;margin-top:-4px">Add each clause once here. When making a quotation you'll just tick the ones that apply — no retyping every time. Tip: add new clauses at the bottom rather than deleting old ones once a quotation has already been sent to a customer.</p><div id="termsBox">{% for c in s.terms_library %}<div class="rowbox termrow"><input name="term_title[]" value="{{c.title}}" placeholder="Clause title e.g. Delivery Delay"><textarea name="term_text[]" rows="2" placeholder="Clause text shown on the PDF">{{c.text}}</textarea><button type="button" onclick="this.closest('.termrow').remove()" style="background:#dc3545">Remove</button></div>{% endfor %}</div><button type="button" onclick="addTermRow()">+ Add Clause</button><h3>Default / Fallback Wording</h3><p style="color:#777;font-size:13px;margin-top:-4px">Used only when no clause above is ticked on a particular quotation.</p><textarea name="default_terms_conditions" rows="4" placeholder="Leave blank to use the built-in default wording">{{s.default_terms_conditions}}</textarea><h3>Tax</h3><label>GST %</label><input name="gst_percent" type="number" step="any" value="{{s.gst_percent}}"><label><input style="width:auto" type="checkbox" name="gst_enabled" {% if s.gst_enabled %}checked{% endif %}> Enable GST</label><label>WHT %</label><input name="wht_percent" type="number" step="any" value="{{s.wht_percent}}"><label><input style="width:auto" type="checkbox" name="wht_enabled" {% if s.wht_enabled %}checked{% endif %}> Enable WHT</label><label>WHT Mode</label><select name="wht_mode"><option value="deduct" {% if s.wht_mode=='deduct' %}selected{% endif %}>Deduct</option><option value="add" {% if s.wht_mode=='add' %}selected{% endif %}>Add</option></select><h3>Default Payment Terms</h3><select name="payment_terms"><option value="50_50" {% if s.payment_terms=='50_50' %}selected{% endif %}>50% Advance + 50% before/at Delivery</option><option value="100_advance" {% if s.payment_terms=='100_advance' %}selected{% endif %}>100% Advance</option><option value="custom" {% if s.payment_terms=='custom' %}selected{% endif %}>Custom</option></select><label>Custom Payment Terms</label><textarea name="custom_payment_terms">{{s.custom_payment_terms}}</textarea><h3>Notification WhatsApp Numbers</h3>{% for i in range(3) %}<label>Notification Number {{i+1}}</label><input name="notification_{{i}}" value="{{s.notification_numbers[i]}}" placeholder="923175240272">{% endfor %}<p>Normal wa.me links cannot automatically push notifications; these numbers are stored for notification links/manual use. Automatic WhatsApp notifications require an API/provider.</p><h3>🔊 Client Welcome Voice</h3><p style="color:#777;font-size:13px;margin-top:-4px">Controls the voice that greets clients on the order form. Voices come from the visitor's own browser, so use "Test Voice" below (in this browser) to check how it sounds before saving.</p><div class="grid"><div><label>Language</label><select name="welcome_voice_lang" id="wvl"><option value="en-US" {% if s.welcome_voice_lang=='en-US' %}selected{% endif %}>English (US)</option><option value="en-GB" {% if s.welcome_voice_lang=='en-GB' %}selected{% endif %}>English (UK)</option><option value="en-IN" {% if s.welcome_voice_lang=='en-IN' %}selected{% endif %}>English (India)</option><option value="ur-PK" {% if s.welcome_voice_lang=='ur-PK' %}selected{% endif %}>Urdu</option></select></div><div><label>Preferred Voice Name (optional)</label><input name="welcome_voice_hint" id="wvh" value="{{s.welcome_voice_hint}}" placeholder="e.g. Zira, Google, Samantha"></div></div><div class="grid"><div><label>Pitch ({{s.welcome_pitch}})</label><input type="range" name="welcome_pitch" id="wvp" min="0.5" max="2" step="0.05" value="{{s.welcome_pitch}}" oninput="document.getElementById('wvpVal').textContent=this.value"> <span id="wvpVal" style="font-size:12px;color:#777">{{s.welcome_pitch}}</span></div><div><label>Speed ({{s.welcome_rate}})</label><input type="range" name="welcome_rate" id="wvr" min="0.5" max="1.5" step="0.05" value="{{s.welcome_rate}}" oninput="document.getElementById('wvrVal').textContent=this.value"> <span id="wvrVal" style="font-size:12px;color:#777">{{s.welcome_rate}}</span></div><div><label>Volume ({{s.welcome_volume}})</label><input type="range" name="welcome_volume" id="wvv" min="0" max="1" step="0.05" value="{{s.welcome_volume}}" oninput="document.getElementById('wvvVal').textContent=this.value"> <span id="wvvVal" style="font-size:12px;color:#777">{{s.welcome_volume}}</span></div></div><label>Welcome Message (English)</label><textarea name="welcome_message_en" id="wme" rows="3">{{s.welcome_message_en}}</textarea><label>Welcome Message (Urdu)</label><textarea name="welcome_message_ur" id="wmu" rows="3">{{s.welcome_message_ur}}</textarea><button type="button" onclick="testVoice()" style="background:#25d366;margin-bottom:14px">🔊 Test Voice</button><h3>Admin Dashboard Notifications</h3><label><input style="width:auto" type="checkbox" name="admin_auto_refresh" {% if s.admin_auto_refresh %}checked{% endif %}> Auto-refresh admin dashboard when a new order arrives</label><label><input style="width:auto" type="checkbox" name="admin_notify_sound" {% if s.admin_notify_sound %}checked{% endif %}> Play a sound + browser notification on new orders</label><h3>🖼️ Portfolio Gallery (shown as a scrolling slider on the client order page)</h3><p style="color:#777;font-size:13px;margin-top:-4px">Upload photos of parts / jobs you've completed. They'll auto-scroll at the bottom of the client's order form.</p>{% if s.portfolio %}<div class="grid">{% for item in s.portfolio %}<div class="rowbox" style="text-align:center"><img src="/uploads/{{item.file}}" style="width:100%;height:90px;object-fit:cover;border-radius:6px"><input name="portfolio_caption[]" value="{{item.caption}}" placeholder="Caption"><input type="hidden" name="portfolio_file[]" value="{{item.file}}"><label style="font-weight:normal;font-size:12px"><input style="width:auto" type="checkbox" name="remove_portfolio[]" value="{{item.file}}"> Remove this photo</label></div>{% endfor %}</div>{% endif %}<label>Add New Photos</label><input type="file" name="portfolio_images" accept="image/*" multiple><label>Caption for new photo(s) (optional, applies to all newly added)</label><input name="portfolio_new_caption" placeholder="e.g. CNC milled bracket"><button>Save Settings</button></form></div></body></html>'''
+</script></head><body><div class="box"><a href="/drd-secure-admin">← Admin</a><h2>Settings</h2><p style="color:#777;font-size:13px">All fields below are optional — leave anything blank and it will simply not appear on quotations/invoices.</p><form method="POST" enctype="multipart/form-data"><div class="grid">{% for key,label in [('company_name','Company Name'),('address','Address'),('phone','Phone'),('email','Email'),('website','Website'),('ntn','NTN'),('strn','STRN / GST'),('bank_name','Bank Name'),('account_title','Account Title'),('account_number','Account Number'),('iban','IBAN')] %}<div><label>{{label}}</label><input name="{{key}}" value="{{s[key]}}"></div>{% endfor %}</div><label>Payment Instructions</label><textarea name="payment_instructions" rows="3">{{s.payment_instructions}}</textarea><h3>Terms & Conditions Library</h3><p style="color:#777;font-size:13px;margin-top:-4px">Add each clause once here. When making a quotation you'll just tick the ones that apply — no retyping every time. Tip: add new clauses at the bottom rather than deleting old ones once a quotation has already been sent to a customer.</p><div id="termsBox">{% for c in s.terms_library %}<div class="rowbox termrow"><input name="term_title[]" value="{{c.title}}" placeholder="Clause title e.g. Delivery Delay"><textarea name="term_text[]" rows="2" placeholder="Clause text shown on the PDF">{{c.text}}</textarea><button type="button" onclick="this.closest('.termrow').remove()" style="background:#dc3545">Remove</button></div>{% endfor %}</div><button type="button" onclick="addTermRow()">+ Add Clause</button><h3>Default / Fallback Wording</h3><p style="color:#777;font-size:13px;margin-top:-4px">Used only when no clause above is ticked on a particular quotation.</p><textarea name="default_terms_conditions" rows="4" placeholder="Leave blank to use the built-in default wording">{{s.default_terms_conditions}}</textarea><h3>Tax</h3><label>GST %</label><input name="gst_percent" type="number" step="any" value="{{s.gst_percent}}"><label><input style="width:auto" type="checkbox" name="gst_enabled" {% if s.gst_enabled %}checked{% endif %}> Enable GST</label><label>WHT %</label><input name="wht_percent" type="number" step="any" value="{{s.wht_percent}}"><label><input style="width:auto" type="checkbox" name="wht_enabled" {% if s.wht_enabled %}checked{% endif %}> Enable WHT</label><label>WHT Mode</label><select name="wht_mode"><option value="deduct" {% if s.wht_mode=='deduct' %}selected{% endif %}>Deduct</option><option value="add" {% if s.wht_mode=='add' %}selected{% endif %}>Add</option></select><h3>Default Payment Terms</h3><select name="payment_terms"><option value="50_50" {% if s.payment_terms=='50_50' %}selected{% endif %}>50% Advance + 50% before/at Delivery</option><option value="100_advance" {% if s.payment_terms=='100_advance' %}selected{% endif %}>100% Advance</option><option value="custom" {% if s.payment_terms=='custom' %}selected{% endif %}>Custom</option></select><label>Custom Payment Terms</label><textarea name="custom_payment_terms">{{s.custom_payment_terms}}</textarea><h3>🔒 Admin Security</h3><p style="color:#777;font-size:13px;margin-top:-4px">Set a PIN to require login for the Admin Dashboard and Settings. Leave blank to keep admin pages open (no login) as before.</p><label>Admin PIN</label><input name="admin_pin" type="password" value="{{s.admin_pin}}" placeholder="e.g. 4-6 digit PIN" inputmode="numeric"><h3>Notification WhatsApp Numbers</h3>{% for i in range(3) %}<label>Notification Number {{i+1}}</label><input name="notification_{{i}}" value="{{s.notification_numbers[i]}}" placeholder="923175240272">{% endfor %}<p>Normal wa.me links cannot automatically push notifications; these numbers are stored for notification links/manual use. Automatic WhatsApp notifications require an API/provider.</p><h3>🔊 Client Welcome Voice</h3><p style="color:#777;font-size:13px;margin-top:-4px">Controls the voice that greets clients on the order form. Voices come from the visitor's own browser, so use "Test Voice" below (in this browser) to check how it sounds before saving.</p><div class="grid"><div><label>Language</label><select name="welcome_voice_lang" id="wvl"><option value="en-US" {% if s.welcome_voice_lang=='en-US' %}selected{% endif %}>English (US)</option><option value="en-GB" {% if s.welcome_voice_lang=='en-GB' %}selected{% endif %}>English (UK)</option><option value="en-IN" {% if s.welcome_voice_lang=='en-IN' %}selected{% endif %}>English (India)</option><option value="ur-PK" {% if s.welcome_voice_lang=='ur-PK' %}selected{% endif %}>Urdu</option></select></div><div><label>Preferred Voice Name (optional)</label><input name="welcome_voice_hint" id="wvh" value="{{s.welcome_voice_hint}}" placeholder="e.g. Zira, Google, Samantha"></div></div><div class="grid"><div><label>Pitch ({{s.welcome_pitch}})</label><input type="range" name="welcome_pitch" id="wvp" min="0.5" max="2" step="0.05" value="{{s.welcome_pitch}}" oninput="document.getElementById('wvpVal').textContent=this.value"> <span id="wvpVal" style="font-size:12px;color:#777">{{s.welcome_pitch}}</span></div><div><label>Speed ({{s.welcome_rate}})</label><input type="range" name="welcome_rate" id="wvr" min="0.5" max="1.5" step="0.05" value="{{s.welcome_rate}}" oninput="document.getElementById('wvrVal').textContent=this.value"> <span id="wvrVal" style="font-size:12px;color:#777">{{s.welcome_rate}}</span></div><div><label>Volume ({{s.welcome_volume}})</label><input type="range" name="welcome_volume" id="wvv" min="0" max="1" step="0.05" value="{{s.welcome_volume}}" oninput="document.getElementById('wvvVal').textContent=this.value"> <span id="wvvVal" style="font-size:12px;color:#777">{{s.welcome_volume}}</span></div></div><label>Welcome Message (English)</label><textarea name="welcome_message_en" id="wme" rows="3">{{s.welcome_message_en}}</textarea><label>Welcome Message (Urdu)</label><textarea name="welcome_message_ur" id="wmu" rows="3">{{s.welcome_message_ur}}</textarea><button type="button" onclick="testVoice()" style="background:#25d366;margin-bottom:14px">🔊 Test Voice</button><h3>Admin Dashboard Notifications</h3><label><input style="width:auto" type="checkbox" name="admin_auto_refresh" {% if s.admin_auto_refresh %}checked{% endif %}> Auto-refresh admin dashboard when a new order arrives</label><label><input style="width:auto" type="checkbox" name="admin_notify_sound" {% if s.admin_notify_sound %}checked{% endif %}> Play a sound + browser notification on new orders</label><h3>🖼️ Portfolio Gallery (shown as a scrolling slider on the client order page)</h3><p style="color:#777;font-size:13px;margin-top:-4px">Upload photos of parts / jobs you've completed. They'll auto-scroll at the bottom of the client's order form.</p>{% if s.portfolio %}<div class="grid">{% for item in s.portfolio %}<div class="rowbox" style="text-align:center"><img src="/uploads/{{item.file}}" style="width:100%;height:90px;object-fit:cover;border-radius:6px"><input name="portfolio_caption[]" value="{{item.caption}}" placeholder="Caption"><input type="hidden" name="portfolio_file[]" value="{{item.file}}"><label style="font-weight:normal;font-size:12px"><input style="width:auto" type="checkbox" name="remove_portfolio[]" value="{{item.file}}"> Remove this photo</label></div>{% endfor %}</div>{% endif %}<label>Add New Photos</label><input type="file" name="portfolio_images" accept="image/*" multiple><label>Caption for new photo(s) (optional, applies to all newly added)</label><input name="portfolio_new_caption" placeholder="e.g. CNC milled bracket"><button>Save Settings</button></form></div></body></html>'''
+
+ADMIN_LOGIN_PAGE = '''<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>Admin Login</title><style>body{font-family:'Segoe UI',Arial,sans-serif;background:linear-gradient(160deg,#0d2b40,#123f5d 40%,#1d6fa5);min-height:100vh;display:flex;align-items:center;justify-content:center;padding:16px;margin:0}.box{max-width:380px;background:white;padding:34px 30px;border-radius:16px;box-shadow:0 10px 35px rgba(0,0,0,.25);text-align:center}input{width:100%;box-sizing:border-box;padding:13px;margin:14px 0;border:1.5px solid #e1e5ec;border-radius:8px;text-align:center;font-size:20px;letter-spacing:4px}input:focus{outline:none;border-color:#1d6fa5}button{width:100%;padding:13px;background:linear-gradient(135deg,#123f5d,#1d6fa5);color:white;border:0;border-radius:8px;font-weight:bold;font-size:15px;cursor:pointer}</style></head><body><div class="box"><h2>🔒 Admin Login</h2><p style="color:#666;font-size:14px">Enter your Admin PIN to continue.</p><form method="POST"><input type="hidden" name="next" value="{{next}}"><input type="password" name="pin" inputmode="numeric" autofocus required>{% if error %}<p style="color:#dc3545;font-size:13px">{{error}}</p>{% endif %}<button>Login →</button></form></div></body></html>'''
 
 ADMIN_PAGE = '''<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>DRD Admin</title><style>
 body{font-family:Arial;background:#f0f2f7;margin:0;color:#222}
@@ -1063,7 +1127,7 @@ function runSearch(q){
     </div>`).join('');
 }
 </script></head><body>
-<div class="hero"><div><h2>DRD Manufacturing Solutions - Admin</h2><p>Orders, quotations, payments, invoices and history</p></div><div><a class="btnlink" style="background:rgba(255,255,255,.2)" href="/settings">⚙ Settings</a></div></div>
+<div class="hero"><div><h2>DRD Manufacturing Solutions - Admin</h2><p>Orders, quotations, payments, invoices and history</p></div><div><a class="btnlink" style="background:rgba(255,255,255,.2)" href="/settings">⚙ Settings</a><a class="btnlink" style="background:rgba(255,255,255,.2)" href="/admin-logout">🔒 Logout</a></div></div>
 <div class="wrap">
 <div class="searchbox"><span>🔎</span><input id="searchInput" placeholder="Search any order — Job ID, client name, phone, part name, status..." oninput="runSearch(this.value)" autocomplete="off"></div>
 <div id="searchResults"></div>
@@ -1147,8 +1211,9 @@ def client_form():
         }
         existing.append(new)
         save_all_requests(existing)
+        mark_job_verified(job_id)  # they just proved ownership by submitting with this WhatsApp number
         return render_template_string(SUCCESS_PAGE, job_id=job_id)
-    return render_template_string(INDEX_PAGE, settings=load_settings())
+    return no_cache(make_response(render_template_string(INDEX_PAGE, settings=load_settings())))
 
 
 def build_orders_index(reqs):
@@ -1219,19 +1284,39 @@ def build_clients_index(reqs):
 def track_order():
     job_id = request.args.get('job_id', '').strip()
     if not job_id:
-        return render_template_string(TRACK_FORM_PAGE, not_found=False)
+        return no_cache(make_response(render_template_string(TRACK_FORM_PAGE, not_found=False)))
     req = find_request(job_id)
     if not req:
-        return render_template_string(TRACK_FORM_PAGE, not_found=True)
-    return render_template_string(TRACK_STATUS_PAGE, req=req, money=money)
+        return no_cache(make_response(render_template_string(TRACK_FORM_PAGE, not_found=True)))
+    # Route through the same verified job-detail page rather than duplicating it here.
+    return redirect(url_for('track_order_direct', job_id=job_id))
 
 
 @app.route('/track/<job_id>')
 def track_order_direct(job_id):
     req = find_request(job_id)
     if not req:
-        return render_template_string(TRACK_FORM_PAGE, not_found=True)
-    return render_template_string(TRACK_STATUS_PAGE, req=req, money=money)
+        return no_cache(make_response(render_template_string(TRACK_FORM_PAGE, not_found=True)))
+    if not is_job_verified(job_id):
+        return no_cache(make_response(render_template_string(JOB_VERIFY_PAGE, job_id=job_id, error=None, next=request.path)))
+    return no_cache(make_response(render_template_string(TRACK_STATUS_PAGE, req=req, money=money)))
+
+
+@app.route('/verify-access/<job_id>', methods=['POST'])
+def verify_access(job_id):
+    """A lightweight ownership check: a client must confirm the WhatsApp number
+    tied to a Job ID before its status/payment details are shown, so a guessed
+    or leaked link alone can't expose someone else's private order details."""
+    req = find_request(job_id)
+    next_url = request.form.get('next') or url_for('track_order_direct', job_id=job_id)
+    if not req:
+        return render_template_string(JOB_VERIFY_PAGE, job_id=job_id, error='Order not found.', next=next_url)
+    entered = normalize_phone(request.form.get('phone', ''))
+    if entered and entered == normalize_phone(req.get('whatsapp', '')):
+        mark_job_verified(job_id)
+        return redirect(next_url)
+    return render_template_string(JOB_VERIFY_PAGE, job_id=job_id,
+                                   error="That number doesn't match our records for this order.", next=next_url)
 
 
 @app.route('/my-orders')
@@ -1242,22 +1327,45 @@ def my_orders():
     client can never accidentally see another client's orders."""
     phone_raw = request.args.get('phone', '').strip()
     if not phone_raw:
-        return render_template_string(MY_ORDERS_FORM_PAGE, not_found=False)
+        return no_cache(make_response(render_template_string(MY_ORDERS_FORM_PAGE, not_found=False)))
     phone = normalize_phone(phone_raw)
     if len(phone) < 7:
-        return render_template_string(MY_ORDERS_FORM_PAGE, not_found=True)
+        return no_cache(make_response(render_template_string(MY_ORDERS_FORM_PAGE, not_found=True)))
     reqs = load_requests()
     matches = [r for r in reqs if normalize_phone(r.get('whatsapp', '')) == phone]
     if not matches:
-        return render_template_string(MY_ORDERS_FORM_PAGE, not_found=True)
+        return no_cache(make_response(render_template_string(MY_ORDERS_FORM_PAGE, not_found=True)))
     matches.sort(key=lambda x: x.get('time', ''), reverse=True)
+    for m in matches:
+        mark_job_verified(m.get('job_id', ''))
     total_orders = len(matches)
     total_paid = sum(safe_float(r.get('advance_paid')) for r in matches)
-    return render_template_string(MY_ORDERS_LIST_PAGE, orders=matches, money=money, total_orders=total_orders,
-                                   total_paid=total_paid, client_name=matches[0].get('name', ''))
+    resp = make_response(render_template_string(MY_ORDERS_LIST_PAGE, orders=matches, money=money, total_orders=total_orders,
+                                                  total_paid=total_paid, client_name=matches[0].get('name', '')))
+    return no_cache(resp)
+
+
+@app.route('/admin-login', methods=['GET', 'POST'])
+def admin_login():
+    next_url = request.args.get('next') or request.form.get('next') or url_for('admin_dashboard')
+    error = None
+    if request.method == 'POST':
+        pin = load_settings().get('admin_pin', '')
+        if request.form.get('pin', '') == pin:
+            session['admin_ok'] = True
+            return redirect(next_url)
+        error = 'Incorrect PIN. Please try again.'
+    return render_template_string(ADMIN_LOGIN_PAGE, error=error, next=next_url)
+
+
+@app.route('/admin-logout')
+def admin_logout():
+    session.pop('admin_ok', None)
+    return redirect(url_for('admin_login'))
 
 
 @app.route('/drd-secure-admin')
+@admin_required
 def admin_dashboard():
     reqs = load_requests()
     orders_json = json.dumps(build_orders_index(reqs))
@@ -1276,6 +1384,7 @@ def admin_dashboard():
 
 
 @app.route('/api/order-status')
+@admin_required
 def order_status_api():
     """Tiny, cheap endpoint the admin dashboard polls to detect ANY activity —
     a new order, a payment submission, a quotation edit, etc — not just new orders."""
@@ -1290,6 +1399,7 @@ def order_status_api():
 
 
 @app.route('/settings', methods=['GET', 'POST'])
+@admin_required
 def settings_page():
     if request.method == 'POST':
         s = load_settings()
@@ -1302,6 +1412,7 @@ def settings_page():
         s['wht_enabled'] = request.form.get('wht_enabled') == 'on'
         s['wht_mode'] = request.form.get('wht_mode', 'deduct')
         s['payment_terms'] = request.form.get('payment_terms', '50_50')
+        s['admin_pin'] = request.form.get('admin_pin', '').strip()
         s['notification_numbers'] = [request.form.get(f'notification_{i}', '').strip() for i in range(3)]
         titles = request.form.getlist('term_title[]')
         texts = request.form.getlist('term_text[]')
@@ -1347,6 +1458,7 @@ def settings_page():
 
 
 @app.route('/update/<job_id>', methods=['POST'])
+@admin_required
 def update_job(job_id):
     all_reqs = load_requests()
     settings = load_settings()
@@ -1423,7 +1535,10 @@ def payment_confirmation(job_id):
     req = find_request(job_id)
     if not req:
         return 'Job not found', 404
-    return render_template_string(PAYMENT_PAGE, req=req, settings=load_settings(), money=money, payment_terms_text=payment_terms_text)
+    if not is_job_verified(job_id):
+        return no_cache(make_response(render_template_string(JOB_VERIFY_PAGE, job_id=job_id, error=None, next=request.path)))
+    resp = make_response(render_template_string(PAYMENT_PAGE, req=req, settings=load_settings(), money=money, payment_terms_text=payment_terms_text))
+    return no_cache(resp)
 
 
 @app.route('/payment-submit/<job_id>', methods=['POST'])
@@ -1463,6 +1578,7 @@ def payment_submit(job_id):
 
 
 @app.route('/verify-payment/<job_id>', methods=['POST'])
+@admin_required
 def verify_payment(job_id):
     """Marks the payment verified and correctly tracks which stage (advance/balance)
     it applies to, for both 50/50 and 100% advance plans. Works whether the order
@@ -1501,6 +1617,7 @@ def verify_payment(job_id):
 
 
 @app.route('/complete/<job_id>', methods=['POST'])
+@admin_required
 def complete_job(job_id):
     all_reqs = load_requests()
     blocked_msg = None
@@ -1572,6 +1689,7 @@ def invoice_pdf(job_id):
 
 
 @app.route('/delete/<job_id>', methods=['POST'])
+@admin_required
 def delete_job(job_id):
     reqs = [r for r in load_requests() if r.get('job_id') != job_id]
     save_all_requests(reqs)
